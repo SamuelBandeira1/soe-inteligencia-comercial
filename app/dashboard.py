@@ -448,6 +448,52 @@ def ritmo_pct(realizado, meta_mes, pesos, linha, semana_atual):
 
 
 
+# ── Template padrão de layout para todos os gráficos ────────────────────────
+_FONT_CHART = 'Inter, Arial, sans-serif'
+_GRID_COLOR = '#EDF1F7'
+_AXIS_COLOR = '#8A9BB0'
+
+def _base_layout(**kwargs):
+    """Retorna dict de layout Plotly com estilo premium padronizado."""
+    base = dict(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#FAFBFD',
+        font=dict(family=_FONT_CHART, size=11, color='#2C3E50'),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom', y=1.02,
+            xanchor='right', x=1,
+            font=dict(size=11, family=_FONT_CHART),
+            bgcolor='rgba(255,255,255,0.85)',
+            bordercolor='#E4E9F0',
+            borderwidth=1,
+        ),
+        xaxis=dict(
+            gridcolor=_GRID_COLOR, gridwidth=1,
+            linecolor='#D4DAE8', linewidth=1,
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+            title_font=dict(size=12, color=_AXIS_COLOR, family=_FONT_CHART),
+            showspikes=True, spikecolor='#B0BEC5',
+            spikethickness=1, spikedash='dot',
+        ),
+        yaxis=dict(
+            gridcolor=_GRID_COLOR, gridwidth=1,
+            linecolor='#D4DAE8', linewidth=1,
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+            title_font=dict(size=12, color=_AXIS_COLOR, family=_FONT_CHART),
+            zeroline=True, zerolinecolor='#C8D0DF', zerolinewidth=1,
+        ),
+        hoverlabel=dict(
+            bgcolor='white',
+            bordercolor='#D4DAE8',
+            font=dict(size=12, family=_FONT_CHART, color='#1B2A4A'),
+        ),
+        margin=dict(t=24, b=48, l=56, r=20),
+    )
+    base.update(kwargs)
+    return base
+
+
 # ── Gauge Plotly ──────────────────────────────────────────────────────────────
 def make_gauge(valor_pct, titulo, height=180):
     """Gauge semicircular limpo — sem texto interno sobreposto."""
@@ -488,11 +534,11 @@ def make_gauge(valor_pct, titulo, height=180):
     ))
 
     fig.add_annotation(
-        x=0.5, y=0.18,
+        x=0.5, y=0.15,
         xref='paper', yref='paper',
         text=f'<b>{pct_display:.1f}%</b>',
         showarrow=False,
-        font=dict(size=20, color=cor, family='Arial'),
+        font=dict(size=22, color=cor, family=_FONT_CHART),
         align='center',
         xanchor='center',
         yanchor='middle',
@@ -502,14 +548,16 @@ def make_gauge(valor_pct, titulo, height=180):
         title={
             'text': f'<b>{titulo}</b>',
             'x': 0.5, 'xanchor': 'center',
-            'font': {'size': 13, 'color': COR_PRIMARIA, 'family': 'Arial'},
+            'font': {'size': 13, 'color': COR_PRIMARIA, 'family': _FONT_CHART},
             'y': 0.97, 'yanchor': 'top',
         },
         height=height,
-        margin=dict(t=36, b=16, l=20, r=20),
+        margin=dict(t=36, b=10, l=16, r=16),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font={'family': 'Arial'},
+        font={'family': _FONT_CHART},
+        hoverlabel=dict(bgcolor='white', bordercolor='#D4DAE8',
+                        font=dict(size=12, family=_FONT_CHART)),
     )
     return fig
 
@@ -520,10 +568,14 @@ def _gauge_sub(realizado, meta):
         return ''
     r_fmt = f'{realizado:,.0f}'.replace(',', '.')
     m_fmt = f'{meta:,.0f}'.replace(',', '.')
+    pct = realizado / meta if meta > 0 else 0
+    cor_pct = COR_VERDE if pct >= 0.90 else (COR_AMARELO if pct >= 0.75 else COR_VERMELHO)
     return (
-        f'<div style="text-align:center; font-size:11px; color:#546E7A; '
-        f'margin-top:-8px; padding-bottom:4px;">'
-        f'<b>{r_fmt}</b> / {m_fmt} ton</div>'
+        f'<div style="text-align:center; font-size:12px; color:#546E7A; '
+        f'margin-top:-6px; padding-bottom:6px; font-family:{_FONT_CHART};">'
+        f'<b style="color:{COR_PRIMARIA}">{r_fmt}</b>'
+        f'<span style="color:#B0BEC5"> / {m_fmt} ton</span>'
+        f'</div>'
     )
 
 
@@ -594,8 +646,13 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
 
     fig.add_trace(go.Bar(
         x=diario['dia'], y=diario['vol_ton'],
-        name='Realizado', marker_color=cores,
-        hovertemplate='Dia %{x}: <b>%{y:,.0f} ton</b><extra></extra>',
+        name='Realizado',
+        marker=dict(
+            color=cores,
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            opacity=0.85,
+        ),
+        hovertemplate='<b>Dia %{x}</b><br>Realizado: <b>%{y:,.0f} ton</b><extra></extra>',
     ))
 
     # ── Barra de desvio vs meta/dia (apenas dias úteis com dados) ──
@@ -682,21 +739,29 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
         ctg_dia if (dias_uteis_rest and meta_restante > 0) else 0,
     ) * 1.30
 
-    fig.update_layout(
-        height=300,
-        margin=dict(t=10, b=40, l=60, r=20),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(title='Dia do mês', tickmode='linear', dtick=1,
-                   range=[0.5, dias_no_mes + 0.5],
-                   gridcolor=COR_GRID, gridwidth=1),
-        yaxis=dict(title='Volume (ton)', gridcolor=COR_GRID, gridwidth=1,
-                   range=[0, y_max]),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1,
-                    font=dict(size=10)),
-        font=dict(family='Arial', size=11, color=COR_TEXTO),
+    layout = _base_layout(
+        height=310,
+        margin=dict(t=16, b=44, l=60, r=16),
         barmode='overlay',
+        xaxis=dict(
+            title=dict(text='Dia do mês', font=dict(size=11, color=_AXIS_COLOR)),
+            tickmode='linear', dtick=1,
+            range=[0.5, dias_no_mes + 0.5],
+            gridcolor=_GRID_COLOR, gridwidth=1,
+            linecolor='#D4DAE8', linewidth=1,
+            tickfont=dict(size=10, color=_AXIS_COLOR, family=_FONT_CHART),
+            showspikes=True, spikecolor='#B0BEC5', spikethickness=1,
+        ),
+        yaxis=dict(
+            title=dict(text='Volume (ton)', font=dict(size=11, color=_AXIS_COLOR)),
+            gridcolor=_GRID_COLOR, gridwidth=1,
+            linecolor='#D4DAE8', linewidth=1,
+            range=[0, y_max],
+            tickfont=dict(size=10, color=_AXIS_COLOR, family=_FONT_CHART),
+            tickformat=',.0f',
+        ),
     )
+    fig.update_layout(**layout)
     return fig
 
 
@@ -754,33 +819,25 @@ def graf_linhas(df_linha, col_meta, pesos):
                  max(proj) if proj else 0)) * 1.22
 
     fig.update_layout(
+        **_base_layout(
         barmode='group',
-        bargap=0.25,
-        bargroupgap=0.08,
-        height=380,
-        margin=dict(t=20, b=90, l=60, r=20),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        bargap=0.28,
+        bargroupgap=0.06,
+        height=390,
+        margin=dict(t=20, b=95, l=60, r=16),
         xaxis=dict(
             tickangle=-38,
-            tickfont=dict(size=11),
-            gridcolor=COR_GRID,
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+            gridcolor=_GRID_COLOR, linecolor='#D4DAE8',
         ),
         yaxis=dict(
-            title='Volume (ton)',
-            gridcolor=COR_GRID,
-            gridwidth=1,
+            title=dict(text='Volume (ton)', font=dict(size=11, color=_AXIS_COLOR)),
+            gridcolor=_GRID_COLOR, gridwidth=1,
             range=[0, y_max],
             tickformat=',',
         ),
-        legend=dict(
-            orientation='h',
-            yanchor='bottom', y=1.01,
-            xanchor='right', x=1,
-            font=dict(size=11),
-        ),
         uniformtext=dict(mode='hide', minsize=8),
-        font=dict(family='Arial', size=11, color=COR_TEXTO),
+        )
     )
     return fig
 
@@ -919,26 +976,33 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
             yanchor='bottom',
         )
 
-    fig.update_layout(
+    fig.update_layout(**_base_layout(
         barmode='group',
         bargap=0.28,
         bargroupgap=0.06,
-        height=320,
-        margin=dict(t=28, b=52, l=60, r=20),
+        height=330,
+        margin=dict(t=28, b=56, l=60, r=16),
         annotations=annotations,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(gridcolor=COR_GRID, tickfont=dict(size=10)),
-        yaxis=dict(title='Volume (ton)', gridcolor=COR_GRID,
-                   range=[0, y_max], tickformat=','),
+        xaxis=dict(
+            gridcolor=_GRID_COLOR,
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+            linecolor='#D4DAE8',
+        ),
+        yaxis=dict(
+            title=dict(text='Volume (ton)', font=dict(size=11, color=_AXIS_COLOR)),
+            gridcolor=_GRID_COLOR, gridwidth=1,
+            range=[0, y_max], tickformat=',',
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+        ),
         legend=dict(
             orientation='h',
-            yanchor='top', y=-0.14,
+            yanchor='top', y=-0.15,
             xanchor='center', x=0.5,
-            font=dict(size=11),
+            font=dict(size=11, family=_FONT_CHART),
+            bgcolor='rgba(255,255,255,0.85)',
+            bordercolor='#E4E9F0', borderwidth=1,
         ),
-        font=dict(family='Arial', size=11, color=COR_TEXTO),
-    )
+    ))
     return fig
 
 
@@ -993,29 +1057,37 @@ def graf_familia_barras(df_sub, familia_nome, fator_proj, chart_key):
     # Altura: mínimo 260, mais espaço para rótulos externos conforme nº de linhas
     h = max(260, 220 + len(linhas) * 28)
 
-    fig.update_layout(
+    fig.update_layout(**_base_layout(
         title=dict(
             text=f'<b>{familia_nome}</b>',
-            font=dict(size=13, color=COR_PRIMARIA, family='Arial'),
+            font=dict(size=13, color=COR_PRIMARIA, family=_FONT_CHART),
             x=0, xanchor='left',
         ),
         barmode='group',
         bargap=0.28,
         bargroupgap=0.06,
         height=h,
-        margin=dict(t=40, b=60, l=55, r=20),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(tickangle=-30, gridcolor=COR_GRID, tickfont=dict(size=11)),
-        yaxis=dict(
-            title='ton', gridcolor=COR_GRID, gridwidth=1,
-            range=[0, y_max], tickformat=',',
+        margin=dict(t=44, b=64, l=56, r=16),
+        xaxis=dict(
+            tickangle=-30,
+            gridcolor=_GRID_COLOR,
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+            linecolor='#D4DAE8',
         ),
-        legend=dict(orientation='h', y=1.12, x=1, xanchor='right',
-                    font=dict(size=10)),
+        yaxis=dict(
+            title=dict(text='ton', font=dict(size=11, color=_AXIS_COLOR)),
+            gridcolor=_GRID_COLOR, gridwidth=1,
+            range=[0, y_max], tickformat=',',
+            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+        ),
+        legend=dict(
+            orientation='h', y=1.12, x=1, xanchor='right',
+            font=dict(size=11, family=_FONT_CHART),
+            bgcolor='rgba(255,255,255,0.85)',
+            bordercolor='#E4E9F0', borderwidth=1,
+        ),
         uniformtext=dict(mode='hide', minsize=8),
-        font=dict(family='Arial', size=11, color=COR_TEXTO),
-    )
+    ))
 
     st.plotly_chart(fig, use_container_width=True,
                     config={'displayModeBar': False},

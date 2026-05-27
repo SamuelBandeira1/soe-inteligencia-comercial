@@ -201,10 +201,23 @@ def _render_login() -> None:
             border: 1.5px solid #D0D8E4 !important;
             padding: 0.55rem 0.75rem !important;
             font-size: 14px !important;
+            background: #ffffff !important;
+            color: #1B2A4A !important;
         }
         .stTextInput input:focus {
             border-color: #1B2A4A !important;
             box-shadow: 0 0 0 3px rgba(27,42,74,0.12) !important;
+            background: #ffffff !important;
+            color: #1B2A4A !important;
+        }
+        .stTextInput input::placeholder {
+            color: #A8B8D0 !important;
+        }
+        /* Labels dos inputs */
+        .stTextInput label, .stTextInput label p {
+            color: #4A5568 !important;
+            font-weight: 600 !important;
+            font-size: 13px !important;
         }
         </style>
         """,
