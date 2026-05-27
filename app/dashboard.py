@@ -27,18 +27,7 @@ import calendar as _cal_mod
 import warnings
 warnings.filterwarnings('ignore')
 
-# ── Módulos do sistema de inteligência comercial ──────────────────────────────
-from modules import score_propensao, demand_sensing, matriz_semanal, dashboard_uf, plano_comercial
-from config import (
-    MESES,
-    LINHAS_EXCLUIR, MAPA_NOME_LINHA, FAMILIA_OVERRIDE,
-)
-from utils.calendar_tw import get_month_tw_ranges, day_to_semana_tw, vectorize_semana_tw, tw_label
-
-
-# ── Calendário de Semanas Técnicas — importado de utils.calendar_tw ──────────
-# get_month_tw_ranges, day_to_semana_tw e vectorize_semana_tw disponíveis via import acima
-
+# ── set_page_config DEVE ser o primeiro comando Streamlit ─────────────────────
 st.set_page_config(
     page_title="S&OE — Inteligência Comercial | Aço Cearense",
     page_icon="🏭",
@@ -46,14 +35,22 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Constantes visuais (cores) — importadas de utils.visual ──────────────────
-# Constantes de negócio (MESES, LINHAS_EXCLUIR, MAPA_NOME_LINHA, FAMILIA_OVERRIDE)
-# foram movidas para app/config.py
-from utils.visual import (
-    COR_PRIMARIA, COR_ACENTO, COR_VERDE, COR_AMARELO, COR_VERMELHO,
-    COR_FUNDO, COR_CARD, COR_TEXTO, COR_GRID,
-    fmt_ton as _fmt_ton, cor_ritmo, icone_ritmo, cor_bg_ritmo, seta_tendencia,
-)
+# ── Importações pesadas — dentro de try/except para mostrar erro na tela ──────
+try:
+    from modules import score_propensao, demand_sensing, matriz_semanal, dashboard_uf, plano_comercial
+    from config import (
+        MESES,
+        LINHAS_EXCLUIR, MAPA_NOME_LINHA, FAMILIA_OVERRIDE,
+    )
+    from utils.calendar_tw import get_month_tw_ranges, day_to_semana_tw, vectorize_semana_tw, tw_label
+    from utils.visual import (
+        COR_PRIMARIA, COR_ACENTO, COR_VERDE, COR_AMARELO, COR_VERMELHO,
+        COR_FUNDO, COR_CARD, COR_TEXTO, COR_GRID,
+        fmt_ton as _fmt_ton, cor_ritmo, icone_ritmo, cor_bg_ritmo, seta_tendencia,
+    )
+except Exception as _e:
+    st.error(f"❌ Erro ao importar módulos internos:\n\n```\n{traceback.format_exc()}\n```")
+    st.stop()
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown(f"""
