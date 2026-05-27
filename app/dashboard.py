@@ -58,13 +58,14 @@ st.markdown(f"""
   /* Fundo geral */
   .stApp {{ background-color: {COR_FUNDO}; }}
 
-  /* Compensa a barra de navegação do Streamlit/HF no topo */
-  .block-container {{
-    padding-top: 4rem !important;
-  }}
-  /* Esconde o header fixo do Streamlit para liberar espaço */
+  /* Deixa o header transparente mas visível (mantém botão da sidebar) */
   header[data-testid="stHeader"] {{
-    display: none !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+  }}
+  /* Compensa a altura do header para o conteúdo não ficar embaixo dele */
+  .block-container {{
+    padding-top: 3.5rem !important;
   }}
 
   /* Sidebar */
