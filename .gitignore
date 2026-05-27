@@ -34,3 +34,7 @@ desktop.ini
 *.log
 *.tmp
 relatorio_qualidade.txt
+
+# Pastas de skills e agentes (repositórios git embutidos)
+.addy-skills/
+.agents/
