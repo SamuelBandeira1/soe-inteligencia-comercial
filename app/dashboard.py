@@ -59,206 +59,215 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown(f"""
+st.markdown("""
 <style>
-  /* ── Fonte global ── */
-  html, body, [class*="css"], .stApp, .stMarkdown, button, input, select {{
+  /* ════════════════════════════════════════
+     FONTE GLOBAL
+  ════════════════════════════════════════ */
+  html, body, [class*="css"], .stApp, .stMarkdown, button, input, select {
     font-family: 'Inter', sans-serif !important;
-  }}
+  }
 
-  /* ── Fundo geral ── */
-  .stApp {{ background-color: {COR_FUNDO}; }}
+  /* ════════════════════════════════════════
+     FUNDO DARK
+  ════════════════════════════════════════ */
+  .stApp { background-color: #0F172A !important; }
+  .main  { background-color: #0F172A !important; }
 
-  /* ── Header Streamlit: transparente mas mantém botão da sidebar ── */
-  header[data-testid="stHeader"] {{
+  /* ── Header Streamlit transparente ── */
+  header[data-testid="stHeader"] {
     background: transparent !important;
     box-shadow: none !important;
-  }}
+  }
 
   /* ── Layout principal ── */
-  .block-container {{
+  .block-container {
     padding-top: 3.5rem !important;
     padding-left: 2rem !important;
     padding-right: 2rem !important;
     max-width: 1400px !important;
-  }}
+  }
 
-  /* ── Oculta elementos padrão do Streamlit ── */
-  #MainMenu, footer {{ visibility: hidden; }}
+  /* ── Oculta elementos padrão ── */
+  #MainMenu, footer { visibility: hidden; }
+
+  /* ── Texto padrão dark ── */
+  .stMarkdown, .stMarkdown p, .stText { color: #CBD5E1 !important; }
 
   /* ════════════════════════════════════════
      SIDEBAR
   ════════════════════════════════════════ */
-  [data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, #1B2A4A 0%, #22366A 100%) !important;
-    border-right: none !important;
-  }}
-  [data-testid="stSidebar"] * {{ color: #E8EDF5 !important; }}
+  [data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0D1B2E 0%, #132040 100%) !important;
+    border-right: 1px solid rgba(255,255,255,0.06) !important;
+  }
+  [data-testid="stSidebar"] * { color: #CBD5E1 !important; }
   [data-testid="stSidebar"] .stMarkdown p,
-  [data-testid="stSidebar"] label {{
-    color: #A8B8D0 !important;
-    font-size: 11px !important;
-    font-weight: 600 !important;
+  [data-testid="stSidebar"] label {
+    color: #64748B !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.6px !important;
-  }}
-  [data-testid="stSidebar"] hr {{
-    border-color: rgba(255,255,255,0.10) !important;
-    margin: 12px 0 !important;
-  }}
-  /* inputs da sidebar */
-  [data-testid="stSidebar"] [data-baseweb="select"] {{
-    background: rgba(255,255,255,0.07) !important;
+    letter-spacing: 0.8px !important;
+  }
+  [data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.07) !important;
+    margin: 10px 0 !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="select"] {
+    background: rgba(255,255,255,0.05) !important;
     border-radius: 8px !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-  }}
-  [data-testid="stSidebar"] [data-baseweb="select"] * {{
-    color: #E8EDF5 !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="select"] * {
+    color: #CBD5E1 !important;
     background: transparent !important;
-  }}
-  [data-testid="stSidebar"] [data-baseweb="tag"] {{
-    background: rgba(217,107,45,0.35) !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="tag"] {
+    background: rgba(217,107,45,0.30) !important;
     border: none !important;
-  }}
+  }
+  /* Botão Sair na sidebar */
+  [data-testid="stSidebar"] .stButton > button {
+    background: rgba(255,255,255,0.07) !important;
+    color: #CBD5E1 !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+  }
+  [data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(217,107,45,0.25) !important;
+    border-color: #D96B2D !important;
+    color: #fff !important;
+  }
 
   /* ════════════════════════════════════════
      TABS
   ════════════════════════════════════════ */
-  [data-testid="stTabs"] [role="tablist"] {{
-    background: #ffffff;
+  [data-testid="stTabs"] [role="tablist"] {
+    background: rgba(30,41,59,0.80);
     border-radius: 12px;
     padding: 4px;
     gap: 2px;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.08);
-    border: 1px solid #E4E9F0;
-    margin-bottom: 16px;
-  }}
-  [data-testid="stTabs"] [role="tab"] {{
+    box-shadow: 0 2px 12px rgba(0,0,0,0.30);
+    border: 1px solid rgba(255,255,255,0.07);
+    margin-bottom: 20px;
+  }
+  [data-testid="stTabs"] [role="tab"] {
     border-radius: 9px !important;
     font-weight: 600 !important;
     font-size: 13px !important;
     padding: 8px 18px !important;
-    color: #6B7A99 !important;
+    color: #64748B !important;
     border: none !important;
     transition: all 0.2s ease !important;
     background: transparent !important;
-  }}
-  [data-testid="stTabs"] [role="tab"]:hover {{
-    background: #F0F4FF !important;
-    color: {COR_PRIMARIA} !important;
-  }}
-  [data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
-    background: {COR_PRIMARIA} !important;
+  }
+  [data-testid="stTabs"] [role="tab"]:hover {
+    background: rgba(255,255,255,0.06) !important;
+    color: #CBD5E1 !important;
+  }
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%) !important;
     color: white !important;
-    box-shadow: 0 2px 8px rgba(27,42,74,0.30) !important;
-  }}
-  [data-testid="stTabs"] [role="tab"][aria-selected="true"] p {{
-    color: white !important;
-  }}
-  /* Remove underline padrão do Streamlit nas tabs */
-  [data-testid="stTabs"] [role="tab"] div[data-testid="stMarkdownContainer"] p {{
-    font-weight: 600 !important;
-  }}
-  .stTabs [data-baseweb="tab-highlight"] {{ display: none !important; }}
-  .stTabs [data-baseweb="tab-border"]    {{ display: none !important; }}
+    box-shadow: 0 2px 12px rgba(79,70,229,0.50) !important;
+  }
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { color: white !important; }
+  [data-testid="stTabs"] [role="tab"] div[data-testid="stMarkdownContainer"] p { font-weight: 600 !important; }
+  .stTabs [data-baseweb="tab-highlight"] { display: none !important; }
+  .stTabs [data-baseweb="tab-border"]    { display: none !important; }
 
   /* ════════════════════════════════════════
      CARDS KPI
   ════════════════════════════════════════ */
-  .card {{
-    background: {COR_CARD};
-    border-radius: 14px;
-    padding: 16px 20px 14px 18px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04);
-    margin-bottom: 6px;
-    border-left: 4px solid {COR_PRIMARIA};
-    transition: box-shadow 0.2s ease;
-  }}
-  .card:hover {{
-    box-shadow: 0 4px 16px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
-  }}
-  .card-acento  {{ border-left-color: {COR_ACENTO};   }}
-  .card-verde   {{ border-left-color: {COR_VERDE};    }}
-  .card-amarelo {{ border-left-color: {COR_AMARELO};  }}
-  .card-vermelho{{ border-left-color: {COR_VERMELHO}; }}
-
-  .card-icon {{
-    font-size: 20px;
+  .card {
+    background: linear-gradient(135deg, #1E293B 0%, #1A2540 100%);
+    border-radius: 16px;
+    padding: 18px 22px 16px 20px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06);
     margin-bottom: 8px;
-    display: block;
-  }}
-  .card-label {{
+    border-left: 4px solid #4F46E5;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  .card:hover {
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.10);
+    transform: translateY(-1px);
+  }
+  .card-acento  { border-left-color: #D96B2D; }
+  .card-verde   { border-left-color: #10B981; }
+  .card-amarelo { border-left-color: #F59E0B; }
+  .card-vermelho{ border-left-color: #EF4444; }
+
+  .card-label {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #8A9BB0;
-    margin-bottom: 4px;
-  }}
-  .card-value {{
+    letter-spacing: 1.2px;
+    color: #475569;
+    margin-bottom: 6px;
+  }
+  .card-value {
     font-size: 28px;
     font-weight: 800;
-    color: {COR_PRIMARIA};
+    color: #F1F5F9;
     line-height: 1.05;
     letter-spacing: -0.8px;
-  }}
-  .card-sub {{
+  }
+  .card-sub {
     font-size: 11px;
-    color: #8A9BB0;
+    color: #475569;
     margin-top: 6px;
     display: flex;
     align-items: center;
     gap: 4px;
-  }}
-  .card-delta-pos {{ color: {COR_VERDE};    font-weight: 700; }}
-  .card-delta-neg {{ color: {COR_VERMELHO}; font-weight: 700; }}
-  .card-delta-neu {{ color: {COR_AMARELO};  font-weight: 700; }}
+  }
+  .card-delta-pos { color: #10B981; font-weight: 700; }
+  .card-delta-neg { color: #EF4444; font-weight: 700; }
+  .card-delta-neu { color: #F59E0B; font-weight: 700; }
 
   /* ════════════════════════════════════════
      SEÇÃO TÍTULOS
   ════════════════════════════════════════ */
-  .secao-titulo {{
-    font-size: 13px;
+  .secao-titulo {
+    font-size: 11px;
     font-weight: 700;
-    color: {COR_PRIMARIA};
-    margin: 24px 0 12px 0;
-    padding: 7px 14px 7px 14px;
-    border-left: 3px solid {COR_ACENTO};
-    background: linear-gradient(90deg, rgba(217,107,45,0.08) 0%, transparent 80%);
-    border-radius: 0 8px 8px 0;
+    color: #64748B;
+    margin: 28px 0 14px 0;
+    padding: 0 0 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
     display: block;
-    letter-spacing: .4px;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-  }}
+  }
 
   /* ════════════════════════════════════════
      ABA HEADER
   ════════════════════════════════════════ */
-  .aba-header {{
-    background: linear-gradient(135deg, {COR_PRIMARIA} 0%, #253D6E 100%);
+  .aba-header {
+    background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
     color: white;
-    padding: 20px 28px;
-    border-radius: 14px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 20px rgba(27,42,74,0.18);
-    border: 1px solid rgba(255,255,255,0.06);
-  }}
-  .aba-header h2 {{
-    color: white;
+    padding: 22px 28px;
+    border-radius: 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.40);
+    border: 1px solid rgba(255,255,255,0.07);
+  }
+  .aba-header h2 {
+    color: #F1F5F9;
     margin: 0 0 6px 0;
     font-size: 20px;
     font-weight: 800;
     letter-spacing: -0.3px;
-  }}
-  .aba-header p {{
-    color: rgba(255,255,255,0.75);
+  }
+  .aba-header p {
+    color: #64748B;
     margin: 0;
     font-size: 12.5px;
-    font-weight: 400;
-  }}
-  .badge-semana {{
+  }
+  .badge-semana {
     display: inline-block;
-    background: {COR_ACENTO};
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
     color: white;
     padding: 3px 12px;
     border-radius: 20px;
@@ -267,61 +276,73 @@ st.markdown(f"""
     margin-left: 10px;
     letter-spacing: 0.3px;
     vertical-align: middle;
-  }}
+    box-shadow: 0 2px 8px rgba(79,70,229,0.40);
+  }
 
   /* ════════════════════════════════════════
      TABELA
   ════════════════════════════════════════ */
-  .tabela-head {{
-    background: {COR_PRIMARIA};
-    color: white;
+  .tabela-head {
+    background: #1E293B;
+    color: #94A3B8;
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10px;
     padding: 10px 8px;
     text-align: center;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.8px;
     text-transform: uppercase;
-  }}
-  .tabela-cell {{
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  .tabela-cell {
     font-size: 12px;
     padding: 7px 9px;
     text-align: right;
-    border-bottom: 1px solid #EDF0F5;
-  }}
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    color: #CBD5E1;
+  }
 
   /* ════════════════════════════════════════
      GLOBAL HEADER
   ════════════════════════════════════════ */
-  .global-header {{
+  .global-header {
     padding: 6px 0 18px 0;
-    border-bottom: 2px solid #E8ECF4;
-    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    margin-bottom: 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-  }}
-  .global-header-title {{
+  }
+  .global-header-title {
     font-size: 22px;
     font-weight: 800;
-    color: {COR_PRIMARIA};
+    color: #F1F5F9;
     letter-spacing: -0.5px;
-  }}
-  .global-header-sub {{
+  }
+  .global-header-sub {
     font-size: 13px;
-    color: #8A9BB0;
+    color: #475569;
     font-weight: 400;
-    margin-left: 6px;
-  }}
-  .global-header-date {{
+    margin-left: 8px;
+  }
+  .global-header-date {
     font-size: 12px;
-    color: #8A9BB0;
+    color: #64748B;
     font-weight: 500;
-    background: white;
-    padding: 6px 14px;
+    background: rgba(255,255,255,0.05);
+    padding: 6px 16px;
     border-radius: 20px;
-    border: 1px solid #E4E9F0;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-  }}
+    border: 1px solid rgba(255,255,255,0.09);
+  }
+
+  /* ════════════════════════════════════════
+     ALERTA BANNER
+  ════════════════════════════════════════ */
+  .stAlert { border-radius: 12px !important; }
+
+  /* ════════════════════════════════════════
+     DATAFRAME / TABELAS NATIVAS
+  ════════════════════════════════════════ */
+  [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -448,45 +469,57 @@ def ritmo_pct(realizado, meta_mes, pesos, linha, semana_atual):
 
 
 
-# ── Template padrão de layout para todos os gráficos ────────────────────────
-_FONT_CHART = 'Inter, Arial, sans-serif'
-_GRID_COLOR = '#EDF1F7'
-_AXIS_COLOR = '#8A9BB0'
+# ── Template padrão de layout para todos os gráficos — DARK THEME ───────────
+_FONT_CHART  = 'Inter, Arial, sans-serif'
+_GRID_COLOR  = 'rgba(255,255,255,0.05)'
+_AXIS_COLOR  = '#475569'
+_BG_PLOT     = '#1E293B'
+_BG_PAPER    = 'rgba(0,0,0,0)'
+
+# Paleta de cores para gráficos dark
+_COR_REALIZADO = '#6366F1'   # indigo vibrante
+_COR_META      = '#334155'   # cinza azulado (fundo)
+_COR_PROJ      = 'rgba(99,102,241,0.15)'
+_COR_CTG       = '#F59E0B'   # âmbar — close-the-gap
+_COR_GAP_POS   = '#10B981'   # verde esmeralda
+_COR_GAP_NEG   = '#EF4444'   # vermelho
+_COR_WEEKEND   = 'rgba(255,255,255,0.08)'
 
 def _base_layout(**kwargs):
-    """Retorna dict de layout Plotly com estilo premium padronizado."""
+    """Retorna dict de layout Plotly com estilo premium dark."""
     base = dict(
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='#FAFBFD',
-        font=dict(family=_FONT_CHART, size=11, color='#2C3E50'),
+        paper_bgcolor=_BG_PAPER,
+        plot_bgcolor=_BG_PLOT,
+        font=dict(family=_FONT_CHART, size=11, color='#94A3B8'),
         legend=dict(
             orientation='h',
             yanchor='bottom', y=1.02,
             xanchor='right', x=1,
-            font=dict(size=11, family=_FONT_CHART),
-            bgcolor='rgba(255,255,255,0.85)',
-            bordercolor='#E4E9F0',
+            font=dict(size=11, family=_FONT_CHART, color='#94A3B8'),
+            bgcolor='rgba(15,23,42,0.80)',
+            bordercolor='rgba(255,255,255,0.10)',
             borderwidth=1,
         ),
         xaxis=dict(
             gridcolor=_GRID_COLOR, gridwidth=1,
-            linecolor='#D4DAE8', linewidth=1,
+            linecolor='rgba(255,255,255,0.08)', linewidth=1,
             tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
             title_font=dict(size=12, color=_AXIS_COLOR, family=_FONT_CHART),
-            showspikes=True, spikecolor='#B0BEC5',
+            showspikes=True, spikecolor='rgba(255,255,255,0.20)',
             spikethickness=1, spikedash='dot',
+            zeroline=False,
         ),
         yaxis=dict(
             gridcolor=_GRID_COLOR, gridwidth=1,
-            linecolor='#D4DAE8', linewidth=1,
+            linecolor='rgba(255,255,255,0.08)', linewidth=1,
             tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
             title_font=dict(size=12, color=_AXIS_COLOR, family=_FONT_CHART),
-            zeroline=True, zerolinecolor='#C8D0DF', zerolinewidth=1,
+            zeroline=True, zerolinecolor='rgba(255,255,255,0.08)', zerolinewidth=1,
         ),
         hoverlabel=dict(
-            bgcolor='white',
-            bordercolor='#D4DAE8',
-            font=dict(size=12, family=_FONT_CHART, color='#1B2A4A'),
+            bgcolor='#1E293B',
+            bordercolor='rgba(255,255,255,0.15)',
+            font=dict(size=12, family=_FONT_CHART, color='#F1F5F9'),
         ),
         margin=dict(t=24, b=48, l=56, r=20),
     )
@@ -517,17 +550,17 @@ def make_gauge(valor_pct, titulo, height=180):
                 'tickfont': {'size': 8, 'color': '#90A4AE'},
                 'nticks': 7,
             },
-            'bar': {'color': cor, 'thickness': 0.65},
-            'bgcolor': '#F8F9FA',
+            'bar': {'color': cor, 'thickness': 0.68},
+            'bgcolor': '#1E293B',
             'borderwidth': 0,
             'steps': [
-                {'range': [0,  75],  'color': '#F5D5D1'},  # rosa suave
-                {'range': [75, 90],  'color': '#F5E9C8'},  # âmbar suave
-                {'range': [90, 120], 'color': '#D6EDE0'},  # verde suave
+                {'range': [0,  75],  'color': 'rgba(239,68,68,0.15)'},
+                {'range': [75, 90],  'color': 'rgba(245,158,11,0.15)'},
+                {'range': [90, 120], 'color': 'rgba(16,185,129,0.15)'},
             ],
             'threshold': {
-                'line': {'color': COR_PRIMARIA, 'width': 3},
-                'thickness': 0.8,
+                'line': {'color': 'rgba(255,255,255,0.40)', 'width': 2},
+                'thickness': 0.80,
                 'value': 100,
             },
         },
@@ -555,9 +588,9 @@ def make_gauge(valor_pct, titulo, height=180):
         margin=dict(t=36, b=10, l=16, r=16),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font={'family': _FONT_CHART},
-        hoverlabel=dict(bgcolor='white', bordercolor='#D4DAE8',
-                        font=dict(size=12, family=_FONT_CHART)),
+        font={'family': _FONT_CHART, 'color': '#94A3B8'},
+        hoverlabel=dict(bgcolor='#1E293B', bordercolor='rgba(255,255,255,0.15)',
+                        font=dict(size=12, family=_FONT_CHART, color='#F1F5F9')),
     )
     return fig
 
@@ -642,7 +675,7 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
     cores = []
     for d in diario['dia']:
         wd = date(ano, mes, int(d)).weekday()
-        cores.append('#CFD8DC' if wd >= 5 else '#1B6CA8')
+        cores.append(_COR_WEEKEND if wd >= 5 else _COR_REALIZADO)
 
     fig.add_trace(go.Bar(
         x=diario['dia'], y=diario['vol_ton'],
@@ -676,16 +709,15 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
 
     if gap_x_pos:
         bases_pos = [float(diario.loc[diario['dia']==d, 'vol_ton'].iloc[0]) for d in gap_x_pos]
-        # customdata = delta real (gap_y_pos); %{y} com base = posição absoluta (errado para hover)
         fig.add_trace(go.Bar(
             x=gap_x_pos, y=gap_y_pos,
             name='Acima da meta/dia',
             base=bases_pos,
             width=BAR_GAP_W,
-            marker_color='rgba(40,167,69,0.70)',
-            marker_line=dict(color='rgba(40,167,69,0.9)', width=1),
+            marker_color='rgba(16,185,129,0.60)',
+            marker_line=dict(color='rgba(16,185,129,0.90)', width=1),
             customdata=[round(v) for v in gap_y_pos],
-            hovertemplate='Dia %{x}: +%{customdata:,.0f} ton acima da meta/dia<extra></extra>',
+            hovertemplate='<b>Dia %{x}</b>: +%{customdata:,.0f} ton acima da meta<extra></extra>',
         ))
     if gap_x_neg:
         bases_neg = [float(diario.loc[diario['dia']==d, 'vol_ton'].iloc[0]) for d in gap_x_neg]
@@ -695,42 +727,43 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
             name='Abaixo da meta/dia',
             base=bases_neg,
             width=BAR_GAP_W,
-            marker_color='rgba(220,53,69,0.60)',
-            marker_line=dict(color='rgba(220,53,69,0.85)', width=1),
-            hovertemplate='Dia %{x}: -%{customdata:,.0f} ton abaixo da meta/dia<extra></extra>',
+            marker_color='rgba(239,68,68,0.55)',
+            marker_line=dict(color='rgba(239,68,68,0.85)', width=1),
+            hovertemplate='<b>Dia %{x}</b>: -%{customdata:,.0f} ton abaixo da meta<extra></extra>',
             customdata=[round(v) for v in gap_y_neg],
         ))
 
-    # ── Ritmo esperado — marcadores apenas nos dias úteis passados ──
+    # ── Ritmo esperado ──────────────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=dias_uteis_mes,
         y=[ritmo_dia] * len(dias_uteis_mes),
         name=f'Meta/dia útil ({_fmt_ton(ritmo_dia)} ton)',
         mode='markers',
-        marker=dict(symbol='line-ew', size=10, color=COR_ACENTO,
-                    line=dict(color=COR_ACENTO, width=2)),
-        hovertemplate=f'Meta/dia útil: {ritmo_dia:,.0f} ton<extra></extra>',
+        marker=dict(symbol='line-ew', size=12, color='#F59E0B',
+                    line=dict(color='#F59E0B', width=2.5)),
+        hovertemplate=f'Meta/dia útil: <b>{ritmo_dia:,.0f} ton</b><extra></extra>',
     ))
 
-    # ── Close-the-gap: quanto fazer por dia útil restante ──────────
+    # ── Close-the-gap ───────────────────────────────────────────────
     if dias_uteis_rest and meta_restante > 0:
         fig.add_trace(go.Scatter(
             x=dias_uteis_rest,
             y=[ctg_dia] * len(dias_uteis_rest),
             name=f'Close the gap ({_fmt_ton(ctg_dia)} ton/d.ú.)',
             mode='lines+markers',
-            line=dict(color='#7B1FA2', width=2.5, dash='dashdot'),
-            marker=dict(size=7, color='#7B1FA2'),
+            line=dict(color=_COR_CTG, width=2.5, dash='dash'),
+            marker=dict(size=7, color=_COR_CTG,
+                        line=dict(color=_COR_CTG, width=1)),
             hovertemplate=(f'Dia %{{x}} — necessário: <b>{ctg_dia:,.0f} ton</b><br>'
                            f'Faltam {_fmt_ton(meta_restante)} ton em {n_rest} d.ú.<extra></extra>'),
         ))
-        # Anotação do valor no primeiro dia restante
         fig.add_annotation(
             x=dias_uteis_rest[0], y=ctg_dia,
             text=f'<b>{_fmt_ton(ctg_dia)}</b> ton/d',
-            showarrow=False, yshift=14,
-            font=dict(size=10, color='#7B1FA2', family='Arial'),
-            bgcolor='rgba(255,255,255,0.7)',
+            showarrow=False, yshift=16,
+            font=dict(size=10, color=_COR_CTG, family=_FONT_CHART),
+            bgcolor='rgba(15,23,42,0.80)',
+            bordercolor=_COR_CTG, borderwidth=1, borderpad=4,
         )
 
     y_max = max(
@@ -782,33 +815,34 @@ def graf_linhas(df_linha, col_meta, pesos):
 
     fig = go.Figure()
 
-    # ── Projeção (fundo, sem label — só hover) ──
+    # ── Projeção (fundo) ──
     fig.add_trace(go.Bar(
         name='Projeção mês', x=linhas, y=proj,
-        marker_color=COR_PRIMARIA, opacity=0.18,
-        hovertemplate='<b>%{x}</b><br>Projeção: %{customdata} ton<extra></extra>',
+        marker_color=_COR_REALIZADO, opacity=0.12,
+        marker_line=dict(width=0),
+        hovertemplate='<b>%{x}</b><br>Projeção: <b>%{customdata} ton</b><extra></extra>',
         customdata=[_fmt_ton(v) for v in proj],
     ))
 
     # ── Meta acumulada ──
     fig.add_trace(go.Bar(
         name='Meta acum.', x=linhas, y=meta_ac,
-        marker_color=COR_ACENTO,
-        marker_line=dict(color=COR_ACENTO, width=1),
-        opacity=0.55,
-        hovertemplate='<b>%{x}</b><br>Meta acum.: %{customdata} ton<extra></extra>',
+        marker_color='#334155',
+        marker_line=dict(color='rgba(255,255,255,0.10)', width=1),
+        opacity=0.90,
+        hovertemplate='<b>%{x}</b><br>Meta acum.: <b>%{customdata} ton</b><extra></extra>',
         customdata=[_fmt_ton(v) for v in meta_ac],
     ))
 
-    # ── Realizado (com label formatado em PT-BR) ──
+    # ── Realizado ──
     fig.add_trace(go.Bar(
         name='Realizado', x=linhas, y=real,
         marker_color=cores_real,
-        marker_line=dict(color='rgba(0,0,0,0.15)', width=1),
+        marker_line=dict(color='rgba(0,0,0,0)', width=0),
         text=[_fmt_ton(v) for v in real],
         textposition='outside',
-        textfont=dict(size=10, color=COR_TEXTO, family='Arial'),
-        hovertemplate='<b>%{x}</b><br>Realizado: %{customdata} ton<extra></extra>',
+        textfont=dict(size=10, color='#94A3B8', family=_FONT_CHART),
+        hovertemplate='<b>%{x}</b><br>Realizado: <b>%{customdata} ton</b><extra></extra>',
         customdata=[_fmt_ton(v) for v in real],
         cliponaxis=False,
     ))
@@ -932,10 +966,11 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
     fig.add_trace(go.Bar(
         name=col_meta_label,
         x=nomes, y=meta_vals,
-        marker_color=COR_ACENTO, opacity=0.40,
+        marker_color='#334155', opacity=0.90,
+        marker_line=dict(color='rgba(255,255,255,0.08)', width=1),
         text=[_fmt_ton(v) if v > 0 else '' for v in meta_vals],
         textposition='inside',
-        textfont=dict(size=10, color='#444'),
+        textfont=dict(size=10, color='#64748B', family=_FONT_CHART),
         hovertemplate='<b>%{x}</b><br>' + col_meta_label + ': <b>%{customdata} ton</b><extra></extra>',
         customdata=[_fmt_ton(v) for v in meta_vals],
     ))
@@ -945,10 +980,10 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
         name='Realizado',
         x=nomes, y=real_vals,
         marker_color=cores_real,
-        marker_line=dict(color='rgba(0,0,0,0.10)', width=1),
+        marker_line=dict(color='rgba(0,0,0,0)', width=0),
         text=[_fmt_ton(v) if v > 0 else '' for v in real_vals],
         textposition='inside',
-        textfont=dict(size=11, color='white', family='Arial'),
+        textfont=dict(size=11, color='white', family=_FONT_CHART),
         hovertemplate='<b>%{x}</b><br>Realizado: <b>%{customdata} ton</b><extra></extra>',
         customdata=[_fmt_ton(v) for v in real_vals],
         cliponaxis=False,

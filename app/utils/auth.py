@@ -139,10 +139,13 @@ def render_sidebar_user() -> None:
     }.get(role, role.title() if role else "Acesso Geral")
 
     st.sidebar.markdown(
-        f'<div style="background:#F0F4FA;border-radius:10px;border-left:4px solid #1B2A4A;padding:10px 14px;margin-bottom:8px;">'
-        f'<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#6C757D;margin-bottom:2px;">Usuário conectado</div>'
-        f'<div style="font-size:13px;font-weight:700;color:#1B2A4A;">&#x1F464; {name}</div>'
-        f'<div style="font-size:11px;color:#9EA8B3;margin-top:1px;">{role_label}</div>'
+        f'<div style="background:rgba(255,255,255,0.06);border-radius:10px;'
+        f'border-left:3px solid #4F46E5;padding:10px 14px;margin-bottom:10px;'
+        f'border:1px solid rgba(255,255,255,0.07);">'
+        f'<div style="font-size:9px;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:1px;color:#475569;margin-bottom:4px;">Usuário conectado</div>'
+        f'<div style="font-size:13px;font-weight:700;color:#E2E8F0;">&#x1F464; {name}</div>'
+        f'<div style="font-size:11px;color:#64748B;margin-top:2px;">{role_label}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
