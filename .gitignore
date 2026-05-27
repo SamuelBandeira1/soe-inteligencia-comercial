@@ -1,0 +1,36 @@
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Dados — nunca versionar bases ou parquets
+data/raw/
+data/processed/
+
+# Credenciais — nunca versionar
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Logs e temporários
+*.log
+*.tmp
+relatorio_qualidade.txt
