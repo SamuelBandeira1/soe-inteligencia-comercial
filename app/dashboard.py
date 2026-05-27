@@ -53,10 +53,13 @@ except Exception as _e:
     st.stop()
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
+# Google Fonts em chamada separada para não conflitar com o bloco <style>
+st.markdown(
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">',
+    unsafe_allow_html=True,
+)
+
 st.markdown(f"""
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   /* ── Fonte global ── */
   html, body, [class*="css"], .stApp, .stMarkdown, button, input, select {{
