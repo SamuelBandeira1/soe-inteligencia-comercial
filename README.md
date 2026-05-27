@@ -2,7 +2,7 @@
 title: SOE Inteligencia Comercial
 emoji: 🏭
 colorFrom: blue
-colorTo: orange
+colorTo: red
 sdk: docker
 pinned: false
 ---
