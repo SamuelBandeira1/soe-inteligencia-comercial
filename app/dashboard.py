@@ -1254,7 +1254,15 @@ def render_aba(df_f, df_v_raw, pesos, col_meta, label_meta,
                 unsafe_allow_html=True)
 
     linha_familia = get_linha_familia(df_v_raw)
-    por_linha['familia'] = por_linha['linha'].map(linha_familia).fillna('OUTROS')
+    por_linha['familia'] = (
+        por_linha['linha'].map(linha_familia)
+        .fillna('OUTROS')
+        .astype(str)
+        .str.strip()
+        .replace({"NAN": "OUTROS", "NONE": "OUTROS", "": "OUTROS"})
+    )
+    # Remove linhas sem família válida (sujeira de dados)
+    por_linha = por_linha[~por_linha['familia'].isin(["NAN", "NONE", ""])].copy()
 
     familias_ord = (por_linha.groupby('familia')['vol_real'].sum()
                     .sort_values(ascending=False).index.tolist())

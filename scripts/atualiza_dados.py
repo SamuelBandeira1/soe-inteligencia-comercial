@@ -157,11 +157,20 @@ def _derivar_regiao(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalizar_strings_dimensoes(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    """Aplica strip + upper nas colunas de dimensão informadas."""
+    """Aplica strip + upper nas colunas de dimensão informadas.
+    Valores nulos/NaN viram 'NÃO CLASSIFICADO' para não aparecerem como 'NAN' nos gráficos.
+    """
     df = df.copy()
     for col in cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.strip().str.upper()
+            df[col] = (
+                df[col]
+                .fillna("NÃO CLASSIFICADO")
+                .astype(str)
+                .str.strip()
+                .str.upper()
+                .replace({"NAN": "NÃO CLASSIFICADO", "NONE": "NÃO CLASSIFICADO", "": "NÃO CLASSIFICADO"})
+            )
     return df
 
 
