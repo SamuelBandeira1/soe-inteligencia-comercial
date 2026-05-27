@@ -1364,17 +1364,13 @@ def render(
     if "plano_sem_idx" not in st.session_state:
         st.session_state["plano_sem_idx"] = 0
 
-    # ── What-If: lê o estado atual para sobrepor no gráfico ──────────────────
-    ajuste      = _get_whatiif(ger_sel)
-    metas_aj    = _aplicar_whatiif(metas, horizonte, df_plot, ajuste, ger_sel)
-
     # ── M1: Gráfico com zonas ─────────────────────────────────────────────────
     st.markdown('<div class="secao-titulo">📈 Horizonte S&OE — Próximas 10 Semanas</div>',
                 unsafe_allow_html=True)
     _legenda_zonas()
 
     fig = _graf_horizonte(
-        horizonte, metas, reais, metas_aj,
+        horizonte, metas, reais, metas,
         ano_sel, mes_sel, semana_atual,
         semana_sel_idx=st.session_state["plano_sem_idx"],
     )
@@ -1413,18 +1409,13 @@ def render(
 
     st.markdown("---")
 
-    # ── M4: What-If ──────────────────────────────────────────────────────────
-    _render_whatiif(horizonte, df_plot, ger_sel, semana_sel_idx)
-
-    st.markdown("---")
-
     # ── Painel de detalhes ────────────────────────────────────────────────────
     w_sel = horizonte[semana_sel_idx]
     _render_detalhes_semana(
         w=w_sel, df_f=df_plot, df_v_raw=df_v_raw,
         filtros=filtros, gerencia_sel=ger_sel,
         ano_ref=ano_sel, mes_ref=mes_sel, sem_ref=semana_atual,
-        ajuste=ajuste,
+        ajuste={},
     )
 
 
