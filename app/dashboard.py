@@ -58,6 +58,11 @@ st.markdown(f"""
   /* Fundo geral */
   .stApp {{ background-color: {COR_FUNDO}; }}
 
+  /* Compensa a barra de navegação do Streamlit/HF no topo */
+  .block-container {{
+    padding-top: 1rem !important;
+  }}
+
   /* Sidebar */
   [data-testid="stSidebar"] {{
     background-color: #EEF1F7;
