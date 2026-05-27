@@ -1,8 +1,22 @@
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
+import traceback
+
+# Garante que app/ está no path independente de como o arquivo é chamado
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
 
 import streamlit as st
+
+# Captura erros de import logo no início para exibir na tela
+try:
+    import pandas as pd
+    import numpy as np
+    import plotly.graph_objects as go
+except Exception as _e:
+    st.error(f"❌ Erro ao importar dependências: {_e}\n\n```\n{traceback.format_exc()}\n```")
+    st.stop()
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -1562,11 +1576,20 @@ def render_aba(df_f, df_v_raw, pesos, col_meta, label_meta,
 # ════════════════════════════════════════════════════════════════════════════════
 
 # ── Autenticação — bloqueia tudo antes de carregar qualquer dado ───────────────
-from utils.auth import require_auth, render_sidebar_user
+try:
+    from utils.auth import require_auth, render_sidebar_user
+except Exception as _e:
+    st.error(f"❌ Erro ao importar auth: {_e}\n\n```\n{traceback.format_exc()}\n```")
+    st.stop()
+
 require_auth()
 
-df, df_v_raw = carrega_dados()
-pesos = calcula_pesos(df_v_raw)
+try:
+    df, df_v_raw = carrega_dados()
+    pesos = calcula_pesos(df_v_raw)
+except Exception as _e:
+    st.error(f"❌ Erro ao carregar dados: {_e}\n\n```\n{traceback.format_exc()}\n```")
+    st.stop()
 
 hoje = date.today()
 
