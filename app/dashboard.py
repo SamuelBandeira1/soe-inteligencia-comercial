@@ -54,132 +54,271 @@ except Exception as _e:
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown(f"""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-  /* Fundo geral */
+  /* ── Fonte global ── */
+  html, body, [class*="css"], .stApp, .stMarkdown, button, input, select {{
+    font-family: 'Inter', sans-serif !important;
+  }}
+
+  /* ── Fundo geral ── */
   .stApp {{ background-color: {COR_FUNDO}; }}
 
-  /* Deixa o header transparente mas visível (mantém botão da sidebar) */
+  /* ── Header Streamlit: transparente mas mantém botão da sidebar ── */
   header[data-testid="stHeader"] {{
-    background-color: transparent !important;
+    background: transparent !important;
     box-shadow: none !important;
   }}
-  /* Compensa a altura do header para o conteúdo não ficar embaixo dele */
+
+  /* ── Layout principal ── */
   .block-container {{
     padding-top: 3.5rem !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    max-width: 1400px !important;
   }}
 
-  /* Sidebar */
+  /* ── Oculta elementos padrão do Streamlit ── */
+  #MainMenu, footer {{ visibility: hidden; }}
+
+  /* ════════════════════════════════════════
+     SIDEBAR
+  ════════════════════════════════════════ */
   [data-testid="stSidebar"] {{
-    background-color: #EEF1F7;
-    border-right: 1px solid #D8DEE9;
+    background: linear-gradient(180deg, #1B2A4A 0%, #22366A 100%) !important;
+    border-right: none !important;
   }}
-  [data-testid="stSidebar"] .stMarkdown h1,
-  [data-testid="stSidebar"] .stMarkdown h2,
-  [data-testid="stSidebar"] .stMarkdown h3 {{
-    color: {COR_PRIMARIA};
+  [data-testid="stSidebar"] * {{ color: #E8EDF5 !important; }}
+  [data-testid="stSidebar"] .stMarkdown p,
+  [data-testid="stSidebar"] label {{
+    color: #A8B8D0 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.6px !important;
+  }}
+  [data-testid="stSidebar"] hr {{
+    border-color: rgba(255,255,255,0.10) !important;
+    margin: 12px 0 !important;
+  }}
+  /* inputs da sidebar */
+  [data-testid="stSidebar"] [data-baseweb="select"] {{
+    background: rgba(255,255,255,0.07) !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+  }}
+  [data-testid="stSidebar"] [data-baseweb="select"] * {{
+    color: #E8EDF5 !important;
+    background: transparent !important;
+  }}
+  [data-testid="stSidebar"] [data-baseweb="tag"] {{
+    background: rgba(217,107,45,0.35) !important;
+    border: none !important;
   }}
 
-  /* Cards customizados */
+  /* ════════════════════════════════════════
+     TABS
+  ════════════════════════════════════════ */
+  [data-testid="stTabs"] [role="tablist"] {{
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 4px;
+    gap: 2px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+    border: 1px solid #E4E9F0;
+    margin-bottom: 16px;
+  }}
+  [data-testid="stTabs"] [role="tab"] {{
+    border-radius: 9px !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    padding: 8px 18px !important;
+    color: #6B7A99 !important;
+    border: none !important;
+    transition: all 0.2s ease !important;
+    background: transparent !important;
+  }}
+  [data-testid="stTabs"] [role="tab"]:hover {{
+    background: #F0F4FF !important;
+    color: {COR_PRIMARIA} !important;
+  }}
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
+    background: {COR_PRIMARIA} !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(27,42,74,0.30) !important;
+  }}
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"] p {{
+    color: white !important;
+  }}
+  /* Remove underline padrão do Streamlit nas tabs */
+  [data-testid="stTabs"] [role="tab"] div[data-testid="stMarkdownContainer"] p {{
+    font-weight: 600 !important;
+  }}
+  .stTabs [data-baseweb="tab-highlight"] {{ display: none !important; }}
+  .stTabs [data-baseweb="tab-border"]    {{ display: none !important; }}
+
+  /* ════════════════════════════════════════
+     CARDS KPI
+  ════════════════════════════════════════ */
   .card {{
     background: {COR_CARD};
-    border-radius: 10px;
-    padding: 14px 18px 12px 16px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
-    margin-bottom: 4px;
+    border-radius: 14px;
+    padding: 16px 20px 14px 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04);
+    margin-bottom: 6px;
     border-left: 4px solid {COR_PRIMARIA};
-    border-top: 1px solid rgba(0,0,0,0.05);
+    transition: box-shadow 0.2s ease;
   }}
-  .card-acento  {{ border-left-color: {COR_ACENTO};   background: linear-gradient(135deg, #fff 85%, rgba(217,107,45,0.05) 100%); }}
-  .card-verde   {{ border-left-color: {COR_VERDE};    background: linear-gradient(135deg, #fff 85%, rgba(26,122,64,0.05) 100%); }}
-  .card-amarelo {{ border-left-color: {COR_AMARELO};  background: linear-gradient(135deg, #fff 85%, rgba(176,125,0,0.05) 100%); }}
-  .card-vermelho{{ border-left-color: {COR_VERMELHO}; background: linear-gradient(135deg, #fff 85%, rgba(192,57,43,0.05) 100%); }}
+  .card:hover {{
+    box-shadow: 0 4px 16px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+  }}
+  .card-acento  {{ border-left-color: {COR_ACENTO};   }}
+  .card-verde   {{ border-left-color: {COR_VERDE};    }}
+  .card-amarelo {{ border-left-color: {COR_AMARELO};  }}
+  .card-vermelho{{ border-left-color: {COR_VERMELHO}; }}
 
+  .card-icon {{
+    font-size: 20px;
+    margin-bottom: 8px;
+    display: block;
+  }}
   .card-label {{
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
+    letter-spacing: 1px;
     color: #8A9BB0;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }}
   .card-value {{
-    font-size: 26px;
+    font-size: 28px;
     font-weight: 800;
     color: {COR_PRIMARIA};
     line-height: 1.05;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.8px;
   }}
   .card-sub {{
     font-size: 11px;
     color: #8A9BB0;
-    margin-top: 5px;
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }}
   .card-delta-pos {{ color: {COR_VERDE};    font-weight: 700; }}
   .card-delta-neg {{ color: {COR_VERMELHO}; font-weight: 700; }}
   .card-delta-neu {{ color: {COR_AMARELO};  font-weight: 700; }}
 
-  /* Títulos de seção */
+  /* ════════════════════════════════════════
+     SEÇÃO TÍTULOS
+  ════════════════════════════════════════ */
   .secao-titulo {{
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 700;
     color: {COR_PRIMARIA};
-    margin: 20px 0 10px 0;
-    padding: 6px 14px 6px 12px;
-    border-left: 4px solid {COR_ACENTO};
-    background: linear-gradient(90deg, rgba(244,130,42,0.07) 0%, transparent 100%);
-    border-radius: 0 6px 6px 0;
+    margin: 24px 0 12px 0;
+    padding: 7px 14px 7px 14px;
+    border-left: 3px solid {COR_ACENTO};
+    background: linear-gradient(90deg, rgba(217,107,45,0.08) 0%, transparent 80%);
+    border-radius: 0 8px 8px 0;
     display: block;
-    letter-spacing: .2px;
+    letter-spacing: .4px;
+    text-transform: uppercase;
   }}
 
-  /* Header da aba */
+  /* ════════════════════════════════════════
+     ABA HEADER
+  ════════════════════════════════════════ */
   .aba-header {{
-    background: linear-gradient(135deg, {COR_PRIMARIA} 0%, #2C4A7C 100%);
+    background: linear-gradient(135deg, {COR_PRIMARIA} 0%, #253D6E 100%);
     color: white;
-    padding: 16px 24px;
-    border-radius: 8px;
-    margin-bottom: 16px;
+    padding: 20px 28px;
+    border-radius: 14px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 20px rgba(27,42,74,0.18);
+    border: 1px solid rgba(255,255,255,0.06);
   }}
   .aba-header h2 {{
     color: white;
-    margin: 0 0 4px 0;
+    margin: 0 0 6px 0;
     font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
   }}
   .aba-header p {{
-    color: rgba(255,255,255,0.8);
+    color: rgba(255,255,255,0.75);
     margin: 0;
-    font-size: 13px;
+    font-size: 12.5px;
+    font-weight: 400;
   }}
   .badge-semana {{
     display: inline-block;
     background: {COR_ACENTO};
     color: white;
-    padding: 2px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 600;
-    margin-left: 8px;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 10px;
+    letter-spacing: 0.3px;
+    vertical-align: middle;
   }}
 
-  /* Tabela customizada */
+  /* ════════════════════════════════════════
+     TABELA
+  ════════════════════════════════════════ */
   .tabela-head {{
     background: {COR_PRIMARIA};
     color: white;
-    font-weight: 600;
-    font-size: 12px;
-    padding: 8px 6px;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 10px 8px;
     text-align: center;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
   }}
   .tabela-cell {{
     font-size: 12px;
-    padding: 6px 8px;
+    padding: 7px 9px;
     text-align: right;
-    border-bottom: 1px solid #E9ECEF;
+    border-bottom: 1px solid #EDF0F5;
   }}
 
-  /* Oculta elementos padrão do Streamlit */
-  #MainMenu, footer {{ visibility: hidden; }}
-  .block-container {{ padding-top: 1rem; }}
+  /* ════════════════════════════════════════
+     GLOBAL HEADER
+  ════════════════════════════════════════ */
+  .global-header {{
+    padding: 6px 0 18px 0;
+    border-bottom: 2px solid #E8ECF4;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }}
+  .global-header-title {{
+    font-size: 22px;
+    font-weight: 800;
+    color: {COR_PRIMARIA};
+    letter-spacing: -0.5px;
+  }}
+  .global-header-sub {{
+    font-size: 13px;
+    color: #8A9BB0;
+    font-weight: 400;
+    margin-left: 6px;
+  }}
+  .global-header-date {{
+    font-size: 12px;
+    color: #8A9BB0;
+    font-weight: 500;
+    background: white;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid #E4E9F0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1611,9 +1750,18 @@ hoje = date.today()
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(f"""
-    <div style="text-align:center; padding: 8px 0 16px 0;">
-      <div style="font-size:22px; font-weight:800; color:{COR_PRIMARIA};">AÇO CEARENSE</div>
-      <div style="font-size:11px; color:#6C757D; letter-spacing:1px;">S&OE — INTELIGÊNCIA COMERCIAL</div>
+    <div style="padding: 20px 8px 20px 8px; text-align:center;">
+      <div style="font-size:11px; font-weight:700; letter-spacing:2px;
+                  color:rgba(255,255,255,0.45); text-transform:uppercase;
+                  margin-bottom:4px;">Aço Cearense</div>
+      <div style="font-size:17px; font-weight:800; color:#FFFFFF;
+                  letter-spacing:-0.3px; line-height:1.2;">
+        S&amp;OE Inteligência
+      </div>
+      <div style="font-size:10px; color:rgba(255,255,255,0.4);
+                  margin-top:4px; letter-spacing:0.5px;">Comercial</div>
+      <div style="height:1px; background:rgba(255,255,255,0.10);
+                  margin:16px 0 0 0;"></div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1621,7 +1769,7 @@ with st.sidebar:
     render_sidebar_user()
 
     st.markdown("---")
-    st.markdown("**Filtros**")
+    st.markdown("🔍 **Filtros**")
 
     empresas_disp = sorted(df['empresa'].dropna().unique())
     empresa_sel = st.multiselect(
@@ -1648,7 +1796,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("**Período**")
+    st.markdown("📅 **Período**")
 
     anos_disp = sorted([int(a) for a in df['ano'].unique()], reverse=True)
     ano_sel = int(st.selectbox("Ano", anos_disp,
@@ -1710,25 +1858,16 @@ if set(uf_sel) != set(sorted(df['uf'].dropna().unique())):
 if set(linha_sel) != set(sorted(df['linha'].dropna().unique())):
     filtros_ativos.append(' + '.join(sorted(linha_sel)))
 
-# ── Logo / header global ───────────────────────────────────────────────────────
-col_h1, col_h2 = st.columns([3, 1])
-with col_h1:
-    st.markdown(f"""
-    <div style="padding:4px 0 12px 0;">
-      <span style="font-size:24px; font-weight:800; color:{COR_PRIMARIA};">
-        Painel S&OE
-      </span>
-      <span style="font-size:14px; color:#6C757D; margin-left:8px;">
-        Inteligência Comercial
-      </span>
-    </div>
-    """, unsafe_allow_html=True)
-with col_h2:
-    st.markdown(f"""
-    <div style="text-align:right; padding-top:8px; font-size:12px; color:#6C757D;">
-      Atualizado: {hoje.strftime('%d/%m/%Y')}
-    </div>
-    """, unsafe_allow_html=True)
+# ── Header global ──────────────────────────────────────────────────────────────
+st.markdown(f"""
+<div class="global-header">
+  <div>
+    <span class="global-header-title">📊 Painel S&amp;OE</span>
+    <span class="global-header-sub">Inteligência Comercial · Aço Cearense</span>
+  </div>
+  <div class="global-header-date">📅 {hoje.strftime('%d/%m/%Y')}</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── Abas ───────────────────────────────────────────────────────────────────────
 aba1, aba2, aba3, aba4 = st.tabs([
