@@ -60,7 +60,11 @@ st.markdown(f"""
 
   /* Compensa a barra de navegação do Streamlit/HF no topo */
   .block-container {{
-    padding-top: 1rem !important;
+    padding-top: 4rem !important;
+  }}
+  /* Esconde o header fixo do Streamlit para liberar espaço */
+  header[data-testid="stHeader"] {{
+    display: none !important;
   }}
 
   /* Sidebar */
