@@ -33,6 +33,7 @@ desktop.ini
 # Logs e temporários
 *.log
 *.tmp
+*.tmp.*
 relatorio_qualidade.txt
 
 # Pastas de skills e agentes (repositórios git embutidos)

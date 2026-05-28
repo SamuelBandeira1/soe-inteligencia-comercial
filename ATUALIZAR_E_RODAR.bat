@@ -1,44 +1,84 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul
-title Sistema de Inteligência Comercial S^&OE
+title SOE - Inteligencia Comercial
 
 echo.
-echo  ╔══════════════════════════════════════════════════════╗
-echo  ║   Sistema de Inteligência Comercial  S^&OE           ║
-echo  ║   Atualização de Dados + Dashboard                   ║
-echo  ╚══════════════════════════════════════════════════════╝
+echo  ========================================================
+echo   Sistema de Inteligencia Comercial  S^&OE
+echo   Atualizacao Diaria + Dashboard
+echo  ========================================================
 echo.
 
 cd /d "%~dp0"
 
-:: Verifica se o venv existe
+:: ── Verifica venv ─────────────────────────────────────────
 if not exist "venv\Scripts\python.exe" (
     echo  [ERRO] Ambiente virtual nao encontrado em venv\
-    echo  Execute: python -m venv venv ^& pip install -r requirements.txt
+    echo  Execute no terminal:
+    echo    python -m venv venv
+    echo    venv\Scripts\pip install -r requirements.txt
     pause
     exit /b 1
 )
 
-echo  [1/2] Processando dados atualizados...
+set PY=venv\Scripts\python.exe
+
+:: =========================================================
+::  PASSO 1 - Incrementa base de vendas com arquivo mensal
+:: =========================================================
+echo  [1/3] Incrementando base de vendas mensal...
 echo  --------------------------------------------------------
 echo.
-venv\Scripts\python.exe scripts\atualiza_dados.py
+%PY% scripts\incrementa_vendas_diario.py
 if errorlevel 1 (
     echo.
-    echo  [ERRO] Falha ao processar os dados.
-    echo  Verifique se os CSVs estao em data\raw\
+    echo  [AVISO] Nao foi possivel atualizar a base de vendas.
+    echo  Verifique se o arquivo vendas_soe_mes_AAAA-MM.csv
+    echo  esta dentro da pasta data\raw\
+    echo.
+    set /p CONT="  Continuar sem atualizar a base? (S/N): "
+    if /i not "!CONT!"=="S" (
+        echo  Operacao cancelada.
+        pause
+        exit /b 1
+    )
+)
+
+:: =========================================================
+::  PASSO 2 - ETL: processa raw -> parquet
+:: =========================================================
+echo.
+echo  --------------------------------------------------------
+echo  [2/3] Processando dados para o dashboard (ETL)...
+echo  --------------------------------------------------------
+echo.
+%PY% scripts\atualiza_dados.py
+if errorlevel 1 (
+    echo.
+    echo  [ERRO] Falha no processamento dos dados.
+    echo  Verifique os arquivos em data\raw\
     pause
     exit /b 1
 )
 
+:: =========================================================
+::  PASSO 3 - Abre o Dashboard para validacao
+:: =========================================================
 echo.
 echo  --------------------------------------------------------
-echo  [2/2] Iniciando o Dashboard...
+echo  [3/3] Abrindo Dashboard para validacao...
+echo.
 echo  Acesse: http://localhost:8501
-echo  Para encerrar: feche esta janela ou pressione Ctrl+C
+echo.
+echo  Quando terminar a validacao pressione Ctrl+C aqui
 echo  --------------------------------------------------------
 echo.
+%PY% -m streamlit run app\dashboard.py --server.headless false
 
-venv\Scripts\python.exe -m streamlit run app\dashboard.py --server.headless false
-
+echo.
+echo  Dashboard encerrado.
+echo  Para publicar a versao, clique em FAZER_PUSH.bat
+echo.
 pause
+endlocal

@@ -5,10 +5,10 @@ title Upload Dados para Google Drive
 cd /d "%~dp0"
 
 echo.
-echo  ╔══════════════════════════════════════════════════════╗
-echo  ║   Upload dos Dados para o Google Drive               ║
-echo  ║   (necessario apos rodar ATUALIZAR_E_RODAR.bat)      ║
-echo  ╚══════════════════════════════════════════════════════╝
+echo  ========================================================
+echo   Upload dos Dados para o Google Drive
+echo   (necessario apos rodar ATUALIZAR_E_RODAR.bat)
+echo  ========================================================
 echo.
 echo  Abrindo os arquivos para upload manual...
 echo.
