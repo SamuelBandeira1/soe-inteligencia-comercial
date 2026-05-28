@@ -37,7 +37,7 @@ st.set_page_config(
 
 # ── Importações pesadas — dentro de try/except para mostrar erro na tela ──────
 try:
-    from modules import score_propensao, demand_sensing, matriz_semanal, dashboard_uf, plano_comercial
+    from modules import score_propensao, demand_sensing, matriz_semanal, dashboard_uf, plano_comercial, assertividade_plano
     from config import (
         MESES,
         LINHAS_EXCLUIR, MAPA_NOME_LINHA, FAMILIA_OVERRIDE,
@@ -2120,11 +2120,12 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ── Abas ───────────────────────────────────────────────────────────────────────
-aba1, aba2, aba3, aba4 = st.tabs([
+aba1, aba2, aba3, aba4, aba5 = st.tabs([
     "📋  Venda vs Plano S&OP",
     "📊  Venda vs Programa S&OE",
     "📞  Prioridade de Contato",
     "🗓️  Plano Comercial Semanal",
+    "📐  Assertividade do Plano",
 ])
 
 with aba1:
@@ -2185,6 +2186,18 @@ with aba4:
     plano_comercial.render(
         df_f=df_f,
         df_v_raw=df_v_raw,
+        filtros=_filtros_globais,
+        semana_atual=_semana_atual_plano,
+        ano_sel=ano_sel,
+        mes_sel=mes_sel,
+        tw_ranges=_tw_ranges_plano,
+    )
+
+# ── Aba 5: Assertividade do Plano ──────────────────────────────────────────────
+with aba5:
+    assertividade_plano.render(
+        df_f=df_f,
+        df_v_raw=df_v_f,
         filtros=_filtros_globais,
         semana_atual=_semana_atual_plano,
         ano_sel=ano_sel,
