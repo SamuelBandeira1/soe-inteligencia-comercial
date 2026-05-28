@@ -34,9 +34,20 @@ _DATA = _ROOT / "data" / "processed"
 
 
 def _is_cloud() -> bool:
-    """Retorna True se o secrets.toml tiver configuração de Google Drive."""
+    """
+    Retorna True apenas se:
+      - secrets.toml tiver a chave [gdrive], E
+      - os parquets locais NAO existirem (ex.: Streamlit Cloud sem arquivos)
+    Se os parquets estiverem presentes localmente (HF Spaces com upload direto),
+    usa o modo LOCAL mesmo que secrets exista.
+    """
     try:
-        return "gdrive" in st.secrets
+        if "gdrive" not in st.secrets:
+            return False
+        # Prefere arquivo local se existir (HF Spaces com parquets no repo)
+        if (_DATA / "vendas_filtrada.parquet").exists():
+            return False
+        return True
     except Exception:
         return False
 
