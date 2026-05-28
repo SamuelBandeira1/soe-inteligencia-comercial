@@ -1,0 +1,2203 @@
+"""
+Módulo "Plano Comercial Semanal" — Aba 4  (v3 — refatoração estratégica)
+
+4 Módulos Funcionais
+────────────────────
+M1  Demand Windowing      — Zonas operacionais no gráfico de horizonte
+M2  Exception Alerter     — Alertas de desvio crítico por linha (topo da tela)
+M3  Opportunity Matrix    — Scatter quadrante Propensão × Volume
+M4  What-If Simulator     — Ajuste interativo de metas na Zona Líquida
+
+Fluxo de renderização
+─────────────────────
+render()
+  ├─ Header + Seletor de Gerência
+  ├─ [M2] Alertas de Desvio Crítico
+  ├─ [M1] Gráfico Horizonte 10 semanas (com vrect zones + overlay what-if)
+  ├─ Radio selector de semana
+  ├─ ── Painel da Semana Selecionada ──
+  │    ├─ KPIs (com meta ajustada se what-if ativo)
+  │    ├─ Barras por linha (colunas verticais)
+  │    ├─ [M4] Expander What-If Simulator (Zona Líquida)
+  │    ├─ [M3] Matriz de Oportunidades (scatter quadrante)
+  │    ├─ Tabela de Clientes
+  │    └─ Distribuição UF
+
+Constraints de design (Google Material / não-AI aesthetic)
+──────────────────────────────────────────────────────────
+• Grid de 8px — padding mínimo 16px, gap entre seções 24px
+• Tipografia: peso 800 títulos, 700 labels, 400 corpo
+• Cores semânticas: verde=#1A7A40, âmbar=#B07D00, vermelho=#C0392B, azul=#1B4F8A
+• Nulos tratados explicitamente em toda função de cálculo
+• Nenhuma alteração em calendar_tw.py
+"""
+from __future__ import annotations
+
+import base64
+import io
+import unicodedata
+from datetime import date
+from pathlib import Path as _Path
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from engines.propensao_engine import PropensaoEngine
+from engines.sazonalidade_semanal import SemanalPropensaoEngine
+from config import GERENCIA_CONFIG, GERENCIA_DESCONHECIDA
+from utils.calendar_tw import get_month_tw_ranges, tw_label
+from utils.visual import (
+    COR_PRIMARIA, COR_ACENTO, COR_VERDE, COR_AMARELO, COR_VERMELHO,
+    COR_TEXTO, COR_GRID, fmt_ton as _fmt_ton, cor_ritmo,
+)
+
+# ── Constantes operacionais ───────────────────────────────────────────────────
+N_HORIZON          = 10
+IDX_ZONE_FROZEN    = 2   # semanas 0-1  (atual + TW+1)
+IDX_ZONE_LIQUID    = 5   # semanas 2-4  (TW+2 a TW+4)
+# semanas 5-9 = Zona Fluida
+
+THRESHOLD_DESVIO   = 0.20   # 20% → alerta de gap
+N_HIST_SEMANAS     = 6      # últimas N ocorrências do mesmo semana_mes para média
+
+_ENGINE_VERSION = "plano_v3"
+
+_MESES_ABR = {
+    1:"Jan", 2:"Fev", 3:"Mar",  4:"Abr",  5:"Mai",  6:"Jun",
+    7:"Jul", 8:"Ago", 9:"Set", 10:"Out", 11:"Nov", 12:"Dez",
+}
+
+# Cores das zonas operacionais
+_COR_FROZEN = "rgba(192, 57, 43, 0.06)"    # vermelho muito suave
+_COR_LIQUID = "rgba(26, 122, 64, 0.06)"    # verde muito suave
+_COR_FLUID  = "rgba(91, 107, 144, 0.04)"   # azul acinzentado suave
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CALENDÁRIO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _horizonte_semanas(ano_ini: int, mes_ini: int, sem_ini: int, n: int = N_HORIZON) -> list[dict]:
+    result = []
+    ano, mes, sem = ano_ini, mes_ini, sem_ini
+    for _ in range(n):
+        tw_m  = get_month_tw_ranges(ano, mes)
+        n_sem = len(tw_m)
+        try:
+            partes   = tw_label(ano, mes, sem).split()
+            lbl_curto = f"{partes[0]}\n{partes[-1].split('/')[0]}"
+        except Exception:
+            lbl_curto = f"S{sem}\n{_MESES_ABR.get(mes, '')}"
+        dias = next(((di, df_) for s, di, df_ in tw_m if s == sem), (1, 28))
+        result.append({
+            "ano": ano, "mes": mes, "semana_mes": sem,
+            "label":      lbl_curto,
+            "label_full": f"Semana {sem} — {_MESES_ABR.get(mes,'')} {ano} ({dias[0]}–{dias[1]})",
+            "dia_ini": dias[0], "dia_fim": dias[1],
+        })
+        if sem < n_sem:
+            sem += 1
+        else:
+            if mes == 12:
+                ano += 1; mes = 1
+            else:
+                mes += 1
+            sem = 1
+    return result
+
+
+def _is_past(w, ano_r, mes_r, sem_r):
+    return (w["ano"], w["mes"], w["semana_mes"]) < (ano_r, mes_r, sem_r)
+
+def _is_current(w, ano_r, mes_r, sem_r):
+    return (w["ano"], w["mes"], w["semana_mes"]) == (ano_r, mes_r, sem_r)
+
+def _is_future(w, ano_r, mes_r, sem_r):
+    return (w["ano"], w["mes"], w["semana_mes"]) > (ano_r, mes_r, sem_r)
+
+def _zone(idx: int) -> str:
+    """Retorna 'frozen' | 'liquid' | 'fluid' pelo índice no horizonte."""
+    if idx < IDX_ZONE_FROZEN:   return "frozen"
+    if idx < IDX_ZONE_LIQUID:   return "liquid"
+    return "fluid"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GERÊNCIA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _gerencia_efetiva(familia: str, regiao: str) -> str:
+    fam = str(familia).upper() if pd.notna(familia) else ""
+    reg = str(regiao).upper()  if pd.notna(regiao)  else ""
+    for ger, cfg in GERENCIA_CONFIG.items():
+        if fam in cfg["familias_override"]: return ger
+    for ger, cfg in GERENCIA_CONFIG.items():
+        if reg in cfg["regioes"]:           return ger
+    return GERENCIA_DESCONHECIDA
+
+def _add_gerencia(df: pd.DataFrame) -> pd.DataFrame:
+    if "gerencia_efetiva" in df.columns:
+        return df
+    df = df.copy()
+    if "familia" not in df.columns:
+        df["familia"] = ""
+    df["gerencia_efetiva"] = df.apply(
+        lambda r: _gerencia_efetiva(r.get("familia",""), r.get("regiao","")), axis=1
+    )
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENGINE CACHE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_engines(df_v: pd.DataFrame, df_hash: str):
+    kp = f"_plano_prop_{_ENGINE_VERSION}_{df_hash}"
+    ks = f"_plano_sem_{_ENGINE_VERSION}_{df_hash}"
+    for k in list(st.session_state):
+        if k.startswith(("_plano_prop_","_plano_sem_")) and k not in (kp,ks):
+            del st.session_state[k]
+    if kp not in st.session_state:
+        st.session_state[kp] = PropensaoEngine(df_v)
+    if ks not in st.session_state:
+        st.session_state[ks] = SemanalPropensaoEngine(df_v)
+    return st.session_state[kp], st.session_state[ks]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M2 — EXCEPTION ALERTER
+# (calcula sem engine — usa apenas df_f histórico)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _calc_desvios(df_f: pd.DataFrame, horizonte: list[dict]) -> list[dict]:
+    """
+    Para cada (linha, semana) nas primeiras IDX_ZONE_LIQUID semanas do horizonte:
+      demanda_estimada = média histórica das últimas N_HIST_SEMANAS ocorrências
+                         do mesmo semana_mes nessa linha
+      alerta se |meta - estimada| / meta > THRESHOLD_DESVIO
+
+    Retorna lista de dicts com info para exibição.
+    """
+    if df_f.empty or "meta_soe" not in df_f.columns:
+        return []
+
+    alertas = []
+
+    for idx, w in enumerate(horizonte[:IDX_ZONE_LIQUID]):
+        sem_k = w["semana_mes"]
+
+        # Meta S&OE desta semana por linha
+        df_w = df_f[(df_f["ano"] == w["ano"]) &
+                    (df_f["mes"] == w["mes"]) &
+                    (df_f["semana_mes"] == sem_k)]
+        meta_linha = df_w.groupby("linha")["meta_soe"].sum()
+
+        # Histórico desta semana_mes (anos/meses anteriores)
+        hist = (
+            df_f[df_f["semana_mes"] == sem_k]
+            .groupby(["ano","mes","linha"])["vol_ton"].sum()
+            .reset_index()
+        )
+        # Exclui o período atual (pode estar incompleto)
+        hist = hist[~((hist["ano"]==w["ano"]) & (hist["mes"]==w["mes"]))]
+
+        for linha, meta in meta_linha.items():
+            if meta <= 0:
+                continue
+            hist_linha = (
+                hist[hist["linha"] == linha]
+                .sort_values(["ano","mes"], ascending=False)
+                .head(N_HIST_SEMANAS)["vol_ton"]
+            )
+            if hist_linha.empty:
+                continue
+            estimada = hist_linha.mean()
+            gap_pct  = (meta - estimada) / meta   # positivo = meta acima da demanda histórica
+            if abs(gap_pct) >= THRESHOLD_DESVIO:
+                zona = _zone(idx)
+                alertas.append({
+                    "zona":        zona,
+                    "idx":         idx,
+                    "semana_label": w["label_full"],
+                    "linha":       linha,
+                    "meta":        meta,
+                    "estimada":    estimada,
+                    "gap_pct":     gap_pct,
+                    # >0 = overplan (meta > demanda histórica = risco de não atingir)
+                    # <0 = underplan (demanda histórica > meta = oportunidade)
+                })
+
+    # Ordena: maior desvio absoluto primeiro
+    alertas.sort(key=lambda x: abs(x["gap_pct"]), reverse=True)
+    return alertas
+
+
+def _render_alertas_desvio(alertas: list[dict]) -> None:
+    """M2 — Renderiza o container de alertas no topo da aba."""
+    st.markdown(
+        '<div style="margin-bottom:8px;">'
+        '<span style="font-size:15px;font-weight:800;color:#2C3E50;">🚨 Alertas de Desvio Crítico de Demanda</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not alertas:
+        st.success(
+            "✅ **Conformidade:** Nenhum desvio crítico detectado para esta gerência "
+            "nas próximas semanas. Programa S&OE alinhado com o padrão histórico de demanda."
+        )
+        return
+
+    # Agrupa por zona para exibição
+    _ZONA_CFG = {
+        "frozen": {"label": "Zona Congelada (execução)", "cor": "#C0392B", "ico": "🔒"},
+        "liquid": {"label": "Zona Líquida (ajustável)",  "cor": "#B07D00", "ico": "🔄"},
+    }
+
+    overplan  = [a for a in alertas if a["gap_pct"] > 0]   # meta > histórico
+    underplan = [a for a in alertas if a["gap_pct"] < 0]   # histórico > meta
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        if overplan:
+            st.markdown(
+                '<div style="font-size:12px;font-weight:700;color:#C0392B;'
+                'text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">'
+                '⬆ Meta acima da demanda histórica</div>',
+                unsafe_allow_html=True,
+            )
+            for a in overplan[:5]:
+                zona_cfg = _ZONA_CFG.get(a["zona"], _ZONA_CFG["liquid"])
+                _alerta_card(
+                    f"{a['linha']} · {a['semana_label']}",
+                    f"Meta: {_fmt_ton(a['meta'])} t &nbsp;·&nbsp; Histórico: {_fmt_ton(a['estimada'])} t",
+                    f"Plano {a['gap_pct']:.0%} acima da demanda histórica. "
+                    f"Risco de não atingimento. {zona_cfg['ico']} {zona_cfg['label']}",
+                    "#C0392B", "#FEF0E6",
+                )
+
+    with col_b:
+        if underplan:
+            st.markdown(
+                '<div style="font-size:12px;font-weight:700;color:#1A7A40;'
+                'text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">'
+                '⬇ Demanda histórica acima do plano</div>',
+                unsafe_allow_html=True,
+            )
+            for a in underplan[:5]:
+                zona_cfg = _ZONA_CFG.get(a["zona"], _ZONA_CFG["liquid"])
+                _alerta_card(
+                    f"{a['linha']} · {a['semana_label']}",
+                    f"Meta: {_fmt_ton(a['meta'])} t &nbsp;·&nbsp; Histórico: {_fmt_ton(a['estimada'])} t",
+                    f"Histórico {abs(a['gap_pct']):.0%} acima do plano. "
+                    f"Oportunidade de revisão. {zona_cfg['ico']} {zona_cfg['label']}",
+                    "#1A7A40", "#D6EDE0",
+                )
+
+    st.markdown(
+        '<div style="font-size:11px;color:#8A9BB0;margin-top:4px;margin-bottom:8px;">'
+        f'Desvio calculado sobre média das últimas {N_HIST_SEMANAS} ocorrências '
+        f'do mesmo semana_mes. Limiar de alerta: {THRESHOLD_DESVIO:.0%}.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _alerta_card(titulo: str, sub: str, descricao: str, cor: str, bg: str) -> None:
+    st.markdown(
+        f'<div style="background:{bg};border-left:4px solid {cor};'
+        f'border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px;">'
+        f'<div style="font-size:12px;font-weight:700;color:{cor};">{titulo}</div>'
+        f'<div style="font-size:11px;color:#546E7A;margin:2px 0;">{sub}</div>'
+        f'<div style="font-size:11px;color:#6C7A89;">{descricao}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M1 — GRÁFICO HORIZONTE COM DEMAND WINDOWS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _graf_horizonte(
+    horizonte:        list[dict],
+    metas:            list[float],
+    reais:            list[float],
+    metas_ajustadas:  list[float],  # what-if overlay (igual a metas se sem ajuste)
+    ano_ref: int, mes_ref: int, sem_ref: int,
+    semana_sel_idx: int,
+) -> go.Figure:
+
+    labels = [w["label"] for w in horizonte]
+    cores_meta = []
+
+    for i, w in enumerate(horizonte):
+        if _is_past(w, ano_ref, mes_ref, sem_ref):
+            cores_meta.append("#CFD8DC")
+        elif _is_current(w, ano_ref, mes_ref, sem_ref):
+            cores_meta.append(COR_ACENTO)
+        else:
+            step = i / max(N_HORIZON - 1, 1)
+            r = int(27  + (127-27)  * step)
+            g = int(79  + (179-79)  * step)
+            b = int(138 + (211-138) * step)
+            cores_meta.append(f"rgb({r},{g},{b})")
+
+    fig = go.Figure()
+
+    # ── Barras de meta original ───────────────────────────────────────────────
+    fig.add_trace(go.Bar(
+        name="Meta S&OE",
+        x=labels, y=metas,
+        marker_color=cores_meta,
+        marker_line=dict(
+            color=[COR_PRIMARIA if i == semana_sel_idx else "rgba(0,0,0,0.08)"
+                   for i in range(len(labels))],
+            width=[3 if i == semana_sel_idx else 1 for i in range(len(labels))],
+        ),
+        opacity=0.85,
+        hovertemplate=(
+            "<b>%{x}</b><br>Meta S&OE: <b>%{customdata} ton</b><br>"
+            "<i>Clique para ver os clientes</i><extra></extra>"
+        ),
+        customdata=[_fmt_ton(v) if v > 0 else "sem programa" for v in metas],
+        cliponaxis=False,
+    ))
+
+    # ── Overlay what-if (linha pontilhada nas barras ajustadas) ───────────────
+    tem_ajuste = any(abs(a - m) > 1 for a, m in zip(metas_ajustadas, metas))
+    if tem_ajuste:
+        fig.add_trace(go.Scatter(
+            name="Meta Ajustada (What-If)",
+            x=labels, y=metas_ajustadas,
+            mode="markers+lines",
+            marker=dict(symbol="diamond", size=10, color=COR_VERDE,
+                        line=dict(color="white", width=1.5)),
+            line=dict(color=COR_VERDE, width=2, dash="dot"),
+            hovertemplate=(
+                "<b>%{x}</b><br>Meta ajustada: <b>%{customdata} ton</b><extra></extra>"
+            ),
+            customdata=[_fmt_ton(v) if v > 0 else "—" for v in metas_ajustadas],
+        ))
+
+    # ── Barras de realizado ───────────────────────────────────────────────────
+    reais_disp = [r if r > 0 else None for r in reais]
+    cores_real = [
+        cor_ritmo(r / m if m > 0 else None) if r and r > 0 else "#CFD8DC"
+        for r, m in zip(reais, metas)
+    ]
+    fig.add_trace(go.Bar(
+        name="Realizado",
+        x=labels, y=reais_disp,
+        marker_color=cores_real,
+        marker_line=dict(color="rgba(0,0,0,0.12)", width=1),
+        opacity=0.65,
+        hovertemplate="<b>%{x}</b><br>Realizado: <b>%{customdata} ton</b><extra></extra>",
+        customdata=[_fmt_ton(v) if v else "—" for v in reais],
+    ))
+
+    # ── Linhas de anotação de zona ────────────────────────────────────────────
+    if 0 <= semana_sel_idx < len(labels):
+        fig.add_vline(x=semana_sel_idx, line_color=COR_PRIMARIA,
+                      line_width=1.5, line_dash="dot")
+        fig.add_annotation(
+            x=semana_sel_idx, y=1.0, xref="x", yref="paper",
+            text="▼ selecionada", showarrow=False,
+            font=dict(size=9, color=COR_PRIMARIA), yanchor="bottom",
+        )
+
+    # ── M1: vrect — Zonas operacionais ────────────────────────────────────────
+    # As vrects usam coordenadas de eixo categórico (x como string)
+    # No Plotly com eixo categórico, x0/x1 são os valores das categorias em si
+    # Para posicionar entre barras, usamos coordenadas numéricas relativas
+    n_total = len(horizonte)
+    frozen_end = IDX_ZONE_FROZEN - 0.5
+    liquid_end = IDX_ZONE_LIQUID - 0.5
+
+    # Zona Congelada: índices 0 até IDX_ZONE_FROZEN-1
+    fig.add_vrect(
+        x0=-0.5, x1=frozen_end,
+        fillcolor=_COR_FROZEN, line_width=0, layer="below",
+        annotation_text="🔒 Congelada",
+        annotation_position="top left",
+        annotation_font=dict(size=10, color="#C0392B"),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+    )
+    # Zona Líquida: IDX_ZONE_FROZEN até IDX_ZONE_LIQUID-1
+    fig.add_vrect(
+        x0=frozen_end, x1=liquid_end,
+        fillcolor=_COR_LIQUID, line_width=0, layer="below",
+        annotation_text="🔄 Líquida",
+        annotation_position="top left",
+        annotation_font=dict(size=10, color="#1A7A40"),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+    )
+    # Zona Fluida: IDX_ZONE_LIQUID até final
+    fig.add_vrect(
+        x0=liquid_end, x1=n_total - 0.5,
+        fillcolor=_COR_FLUID, line_width=0, layer="below",
+        annotation_text="📡 Fluida",
+        annotation_position="top left",
+        annotation_font=dict(size=10, color="#546E7A"),
+        annotation_bgcolor="rgba(255,255,255,0.85)",
+    )
+
+    y_max = max((max(v for v in metas + metas_ajustadas if v > 0) if any(v > 0 for v in metas) else 1), 1) * 1.40
+
+    fig.update_layout(
+        barmode="overlay",
+        bargap=0.22,
+        height=360,
+        margin=dict(t=36, b=56, l=60, r=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(gridcolor=COR_GRID, tickfont=dict(size=10), tickangle=0),
+        yaxis=dict(title="Volume (ton)", gridcolor=COR_GRID,
+                   range=[0, y_max], tickformat=","),
+        legend=dict(orientation="h", yanchor="top", y=-0.14,
+                    xanchor="center", x=0.5, font=dict(size=11)),
+        font=dict(family="Arial", size=11, color=COR_TEXTO),
+        clickmode="event+select",
+    )
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M4 — WHAT-IF SIMULATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_SK_WHATIIF = "plano_whatiif"   # session_state key root
+
+def _wk(gerencia_sel: str) -> str:
+    """Chave de session_state para o what-if da gerência."""
+    return f"{_SK_WHATIIF}_{gerencia_sel.replace(' ','_')}"
+
+
+def _get_whatiif(gerencia_sel: str) -> dict[str, float]:
+    return st.session_state.get(_wk(gerencia_sel), {})
+
+
+def _render_whatiif(
+    horizonte:    list[dict],
+    df_f:         pd.DataFrame,
+    gerencia_sel: str,
+    semana_sel_idx: int,
+) -> dict[str, float]:
+    """
+    M4 — Simulador de ajuste de metas na Zona Líquida.
+
+    Retorna dict {linha: delta_ton} para aplicar no gráfico.
+    """
+    # Só faz sentido na Zona Líquida
+    liquid_weeks = horizonte[IDX_ZONE_FROZEN:IDX_ZONE_LIQUID]
+    if not liquid_weeks:
+        return {}
+
+    with st.expander("🛠️ Proposta de Ajuste de Programa S&OE — Zona Líquida", expanded=False):
+        st.markdown(
+            '<div style="font-size:12px;color:#546E7A;margin-bottom:16px;">'
+            f'Ajuste as metas de volume para a Zona Líquida '
+            f'(<b>TW+2 a TW+{IDX_ZONE_LIQUID}</b>). O impacto é refletido '
+            'imediatamente no gráfico do horizonte (linha verde pontilhada).'
+            '<br><br>'
+            '<b>ℹ️ Estas propostas não alteram o programa oficial — são simulações '
+            'para apoio à decisão.</b>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Agrega meta S&OE para as semanas líquidas por linha
+        frames = []
+        for w in liquid_weeks:
+            df_w = df_f[
+                (df_f["ano"] == w["ano"]) &
+                (df_f["mes"] == w["mes"]) &
+                (df_f["semana_mes"] == w["semana_mes"])
+            ]
+            if not df_w.empty:
+                frames.append(df_w.groupby("linha")["meta_soe"].sum().reset_index())
+
+        if not frames:
+            st.info("Nenhuma meta S&OE disponível para a Zona Líquida.")
+            return {}
+
+        df_liquid = pd.concat(frames).groupby("linha")["meta_soe"].sum().reset_index()
+        df_liquid = df_liquid[df_liquid["meta_soe"] > 0].sort_values("meta_soe", ascending=False)
+
+        if df_liquid.empty:
+            st.info("Sem linhas com meta na Zona Líquida.")
+            return {}
+
+        current_wk = _get_whatiif(gerencia_sel)
+
+        st.markdown(
+            '<div style="font-size:11px;font-weight:700;color:#8A9BB0;'
+            'text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">'
+            'Ajuste de Volume por Linha (Zona Líquida Total)</div>',
+            unsafe_allow_html=True,
+        )
+
+        novos_valores: dict[str, float] = {}
+        total_original = float(df_liquid["meta_soe"].sum())
+        total_ajustado = 0.0
+
+        # Grid 2 colunas para os sliders
+        linhas_list = df_liquid["linha"].tolist()
+        metas_list  = df_liquid["meta_soe"].tolist()
+        mid = (len(linhas_list) + 1) // 2
+        col_l, col_r = st.columns(2)
+
+        for i, (linha, meta_orig) in enumerate(zip(linhas_list, metas_list)):
+            col = col_l if i < mid else col_r
+            val_atual = current_wk.get(linha, meta_orig)
+            step = max(10.0, round(meta_orig * 0.05 / 10) * 10)
+            novo = col.slider(
+                label=f"{linha}",
+                min_value=0.0,
+                max_value=float(meta_orig) * 2.5,
+                value=float(val_atual),
+                step=float(step),
+                format="%.0f t",
+                key=f"wi_{gerencia_sel}_{linha}",
+            )
+            novos_valores[linha] = novo
+            total_ajustado += novo
+
+        # Persiste no session_state
+        st.session_state[_wk(gerencia_sel)] = novos_valores
+
+        # Resumo do impacto
+        delta_total = total_ajustado - total_original
+        cor_delta   = COR_VERDE if delta_total <= 0 else COR_VERMELHO
+        sinal       = "+" if delta_total > 0 else ""
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        _kpi(c1, "Meta Original",  _fmt_ton(total_original) + " ton", COR_PRIMARIA)
+        _kpi(c2, "Meta Ajustada",  _fmt_ton(total_ajustado) + " ton", COR_VERDE)
+        _kpi(c3, "Delta",
+             f"{sinal}{_fmt_ton(abs(delta_total))} ton",
+             cor_delta,
+             "acima do plano" if delta_total > 0 else "abaixo do plano" if delta_total < 0 else "sem alteração")
+
+        # Botão para resetar
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_btn, _ = st.columns([1, 3])
+        with col_btn:
+            if st.button("↺ Resetar ajustes", key=f"wi_reset_{gerencia_sel}"):
+                if _wk(gerencia_sel) in st.session_state:
+                    del st.session_state[_wk(gerencia_sel)]
+                st.rerun()
+
+        # Export Excel do plano ajustado
+        col_exp, _ = st.columns([1, 3])
+        with col_exp:
+            df_exp = pd.DataFrame({
+                "Linha":          linhas_list,
+                "Meta Original":  [round(m, 1) for m in metas_list],
+                "Meta Ajustada":  [round(novos_valores.get(l, m), 1)
+                                   for l, m in zip(linhas_list, metas_list)],
+                "Delta (ton)":    [round(novos_valores.get(l, m) - m, 1)
+                                   for l, m in zip(linhas_list, metas_list)],
+            })
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as w_:
+                df_exp.to_excel(w_, index=False, sheet_name="Ajuste Proposto")
+            st.download_button(
+                label="📥 Exportar proposta (Excel)",
+                data=buf.getvalue(),
+                file_name=f"proposta_ajuste_{gerencia_sel.replace(' ','_')}_{date.today():%Y%m%d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"wi_export_{gerencia_sel}",
+            )
+
+    return _get_whatiif(gerencia_sel)
+
+
+def _aplicar_whatiif(metas_base: list[float], horizonte: list[dict],
+                     df_f: pd.DataFrame, ajuste: dict[str, float],
+                     gerencia_sel: str) -> list[float]:
+    """
+    Aplica o delta do what-if sobre as semanas da Zona Líquida.
+    Retorna lista de metas ajustadas (mesmo tamanho de horizonte).
+    """
+    if not ajuste:
+        return list(metas_base)
+
+    metas_aj = list(metas_base)
+    for idx in range(IDX_ZONE_FROZEN, IDX_ZONE_LIQUID):
+        if idx >= len(horizonte):
+            break
+        w = horizonte[idx]
+        df_w = df_f[
+            (df_f["ano"] == w["ano"]) &
+            (df_f["mes"] == w["mes"]) &
+            (df_f["semana_mes"] == w["semana_mes"])
+        ]
+        if df_w.empty:
+            continue
+        meta_orig_sem = float(df_w["meta_soe"].sum())
+        meta_linhas = df_w.groupby("linha")["meta_soe"].sum()
+
+        # Calcula nova meta desta semana baseado nos sliders
+        nova_meta_sem = 0.0
+        total_linhas  = float(meta_linhas.sum()) if meta_linhas.sum() > 0 else 1
+        for linha, m_orig in meta_linhas.items():
+            proporcao     = m_orig / total_linhas
+            m_ajust_linha = ajuste.get(linha, m_orig)
+            # Interpola: o ajuste é sobre o total da zona líquida,
+            # aplicamos proporcionalmente por semana
+            nova_meta_sem += m_ajust_linha * proporcao * len(horizonte[IDX_ZONE_FROZEN:IDX_ZONE_LIQUID])
+
+        # Normaliza: o ajuste total da zona líquida = soma dos sliders
+        total_ajuste = sum(ajuste.get(l, m) for l, m in meta_linhas.items())
+        if total_ajuste > 0 and total_linhas > 0:
+            # Redistribui o ajuste total da zona pela proporção de cada semana
+            fat = meta_orig_sem / max(float(df_f[
+                (df_f["semana_mes"].isin([horizonte[i]["semana_mes"] for i in range(IDX_ZONE_FROZEN, IDX_ZONE_LIQUID)])) &
+                (df_f["ano"].isin([horizonte[i]["ano"] for i in range(IDX_ZONE_FROZEN, IDX_ZONE_LIQUID)])) &
+                (df_f["mes"].isin([horizonte[i]["mes"] for i in range(IDX_ZONE_FROZEN, IDX_ZONE_LIQUID)]))
+            ]["meta_soe"].sum()), 1)
+            metas_aj[idx] = total_ajuste * fat
+
+    return metas_aj
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M3 — OPPORTUNITY MATRIX (Scatter Quadrante)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_QUAD_CFG = {
+    "Tiro Certo":          {"cor": COR_VERDE,    "simbolo": "circle",   "desc": "Alta Propensão + Alto Volume"},
+    "Garantia de Mix":     {"cor": "#1B4F8A",    "simbolo": "diamond",  "desc": "Alta Propensão + Baixo Volume"},
+    "Desafio Comercial":   {"cor": COR_VERMELHO, "simbolo": "square",   "desc": "Baixa Propensão + Alto Volume"},
+    "Monitoramento":       {"cor": "#9AA5B4",    "simbolo": "x",        "desc": "Baixa Propensão + Baixo Volume"},
+}
+
+
+def _quadrante(score: float, vol: float, med_s: float, med_v: float) -> str:
+    alta_s = score >= med_s
+    alto_v = vol   >= med_v
+    if alta_s and alto_v:   return "Tiro Certo"
+    if alta_s and not alto_v: return "Garantia de Mix"
+    if not alta_s and alto_v: return "Desafio Comercial"
+    return "Monitoramento"
+
+
+def _render_matriz_oportunidades(df_filt: pd.DataFrame, key_suffix: str) -> None:
+    """M3 — Scatter quadrante Propensão Semanal × Volume."""
+
+    if df_filt.empty:
+        st.info("Sem dados para a Matriz de Oportunidades.")
+        return
+
+    needed = {"score_semanal", "volume_medio_mensal", "cd_cliente", "linha", "uf", "tier"}
+    if not needed.issubset(df_filt.columns):
+        return
+
+    df = df_filt.dropna(subset=["score_semanal", "volume_medio_mensal"]).copy()
+    df = df[df["volume_medio_mensal"] > 0]
+    if df.empty:
+        st.info("Volume histórico zero para todos os clientes filtrados.")
+        return
+
+    med_s = float(df["score_semanal"].median())
+    med_v = float(df["volume_medio_mensal"].median())
+
+    df["quadrante"] = df.apply(
+        lambda r: _quadrante(r["score_semanal"], r["volume_medio_mensal"], med_s, med_v),
+        axis=1,
+    )
+
+    # Tamanho do ponto = pct_semana normalizado
+    if "pct_semana" in df.columns:
+        pct_norm = df["pct_semana"].fillna(0)
+        sizes = (8 + pct_norm * 24).clip(6, 32).tolist()
+    else:
+        sizes = [10] * len(df)
+
+    fig = go.Figure()
+
+    for quad, cfg in _QUAD_CFG.items():
+        df_q = df[df["quadrante"] == quad]
+        if df_q.empty:
+            continue
+
+        hover_parts = []
+        for _, r in df_q.iterrows():
+            pct_txt  = f"{r['pct_semana']:.0%}" if "pct_semana" in df_q.columns and r.get("pct_semana", 0) > 0 else "—"
+            nome_raw = str(r.get("nome_cliente", "")).strip()
+            cod      = str(r.get("cd_cliente", "")).strip()
+            nome_txt = nome_raw if nome_raw and nome_raw not in ("", "nan", cod) else cod
+            tel_raw  = str(r.get("telefone_cliente", "")).strip()
+            tel_txt  = f"📞 {tel_raw}<br>" if tel_raw and tel_raw not in ("", "nan", "None") else ""
+            hover_parts.append(
+                f"<b>{nome_txt}</b><br>"
+                f"{tel_txt}"
+                f"Linha: {r['linha']}<br>"
+                f"UF: {r['uf']}<br>"
+                f"Tier: {r['tier']}<br>"
+                f"Score: {r['score_semanal']:.1f}<br>"
+                f"Padrão semana: {pct_txt}<br>"
+                f"Vol. méd.: {_fmt_ton(r['volume_medio_mensal'])} t/mês"
+            )
+
+        q_sizes = [s for s, (_, r) in zip(sizes, df_filt.iterrows())
+                   if r.get("quadrante") == quad] if "quadrante" in df_filt.columns else \
+                  [sizes[i] for i, q in enumerate(df["quadrante"].tolist()) if q == quad]
+
+        q_sizes_list = (8 + df_q.get("pct_semana", pd.Series([0]*len(df_q))).fillna(0) * 24).clip(6, 32).tolist()
+
+        fig.add_trace(go.Scatter(
+            name=quad,
+            x=df_q["score_semanal"].tolist(),
+            y=df_q["volume_medio_mensal"].tolist(),
+            mode="markers",
+            marker=dict(
+                color=cfg["cor"],
+                symbol=cfg["simbolo"],
+                size=q_sizes_list,
+                opacity=0.78,
+                line=dict(color="white", width=0.8),
+            ),
+            hovertemplate="%{customdata}<extra>" + quad + "</extra>",
+            customdata=hover_parts,
+        ))
+
+    # Linhas de mediana
+    y_max_plot = float(df["volume_medio_mensal"].quantile(0.98)) * 1.2 if len(df) > 5 else df["volume_medio_mensal"].max() * 1.2
+
+    fig.add_hline(y=med_v, line_dash="dot", line_color="#9AA5B4", line_width=1.2,
+                  annotation_text=f"Mediana vol. {_fmt_ton(med_v)} t",
+                  annotation_position="right", annotation_font=dict(size=9, color="#9AA5B4"))
+    fig.add_vline(x=med_s, line_dash="dot", line_color="#9AA5B4", line_width=1.2,
+                  annotation_text=f"Mediana score {med_s:.1f}",
+                  annotation_position="top", annotation_font=dict(size=9, color="#9AA5B4"))
+
+    # Labels de quadrante
+    x_max = float(df["score_semanal"].max()) * 1.05
+    _quad_annots = [
+        (med_s + (x_max-med_s)*0.7, med_v + (y_max_plot-med_v)*0.7, "🎯 Tiro Certo",       COR_VERDE),
+        (med_s * 0.5,               med_v + (y_max_plot-med_v)*0.7, "⚠️ Desafio Comercial", COR_VERMELHO),
+        (med_s + (x_max-med_s)*0.7, med_v * 0.3,                   "📦 Garantia de Mix",   "#1B4F8A"),
+        (med_s * 0.5,               med_v * 0.3,                   "👁️ Monitoramento",     "#9AA5B4"),
+    ]
+    for ax, ay, atxt, acor in _quad_annots:
+        fig.add_annotation(
+            x=ax, y=ay, text=f"<b>{atxt}</b>",
+            showarrow=False,
+            font=dict(size=11, color=acor, family="Arial"),
+            bgcolor="rgba(255,255,255,0.7)",
+            bordercolor=acor, borderwidth=1, borderpad=4,
+        )
+
+    fig.update_layout(
+        height=440,
+        margin=dict(t=16, b=48, l=70, r=24),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(title="Score de Propensão Semanal", gridcolor=COR_GRID,
+                   tickfont=dict(size=10)),
+        yaxis=dict(title="Volume Médio/Mês (ton)", gridcolor=COR_GRID,
+                   range=[0, y_max_plot], tickformat=","),
+        legend=dict(orientation="h", yanchor="top", y=-0.12,
+                    xanchor="center", x=0.5, font=dict(size=11)),
+        font=dict(family="Arial", size=11, color=COR_TEXTO),
+    )
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": True, "modeBarButtonsToRemove": ["lasso2d","select2d"]},
+                    key=f"opp_matrix_{key_suffix}")
+
+    # Legenda dos quadrantes
+    st.markdown(
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;'
+        'color:#546E7A;margin-top:4px;">'
+        + "".join([
+            f'<span><span style="color:{cfg["cor"]};font-weight:700;">■</span> '
+            f'<b>{q}</b>: {cfg["desc"]}</span>'
+            for q, cfg in _QUAD_CFG.items()
+        ])
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAINEL DE DETALHES — semana selecionada
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _render_detalhes_semana(
+    w: dict,
+    df_f: pd.DataFrame,
+    df_v_raw: pd.DataFrame,
+    filtros: dict,
+    gerencia_sel: str,
+    ano_ref: int, mes_ref: int, sem_ref: int,
+    ajuste: dict[str, float],
+) -> None:
+    is_past    = _is_past(w, ano_ref, mes_ref, sem_ref)
+    is_current = _is_current(w, ano_ref, mes_ref, sem_ref)
+    is_fut     = _is_future(w, ano_ref, mes_ref, sem_ref)
+
+    status_txt = ("✅ Encerrada" if is_past else
+                  "⏳ Em curso"  if is_current else "🔮 Futura")
+    status_cor = ("#9AA5B4" if is_past else
+                  COR_ACENTO if is_current else "#1B4F8A")
+
+    st.markdown(
+        f'<div style="background:#fff;border-radius:10px;padding:14px 20px;'
+        f'border-left:5px solid {status_cor};'
+        f'box-shadow:0 1px 6px rgba(0,0,0,0.08);margin-bottom:16px;">'
+        f'<span style="font-size:15px;font-weight:800;color:{status_cor};">{status_txt}</span>'
+        f'<span style="font-size:13px;color:#546E7A;margin-left:12px;">{w["label_full"]}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    df_sem = df_f[
+        (df_f["ano"] == w["ano"]) &
+        (df_f["mes"] == w["mes"]) &
+        (df_f["semana_mes"] == w["semana_mes"])
+    ].copy()
+    if gerencia_sel != "Todas" and "gerencia_efetiva" in df_sem.columns:
+        df_sem = df_sem[df_sem["gerencia_efetiva"] == gerencia_sel]
+
+    agg = df_sem.groupby("linha").agg(meta=("meta_soe","sum"), real=("vol_ton","sum")).reset_index()
+    agg = agg[agg["meta"] > 0].sort_values("meta", ascending=False)
+
+    # Aplica ajuste what-if à meta da semana (se semana estiver na zona líquida)
+    agg_aj = agg.copy()
+    if ajuste and not is_past:
+        total_sem_orig = agg["meta"].sum()
+        total_aj_zona  = sum(ajuste.values())
+        if total_sem_orig > 0 and total_aj_zona > 0:
+            fat = total_aj_zona / total_sem_orig / max(IDX_ZONE_LIQUID - IDX_ZONE_FROZEN, 1)
+            # Simples: escala cada linha proporcionalmente
+            for i, row in agg_aj.iterrows():
+                if row["linha"] in ajuste:
+                    proporcao = row["meta"] / total_sem_orig if total_sem_orig > 0 else 0
+                    agg_aj.at[i, "meta"] = ajuste.get(row["linha"], row["meta"])
+
+    total_meta = agg_aj["meta"].sum()
+    total_real = agg_aj["real"].sum() if not is_fut else 0.0
+
+    # KPIs
+    c1, c2, c3, c4 = st.columns(4)
+    _kpi(c1, "Meta S&OE", _fmt_ton(total_meta) + " ton", status_cor, "programa da semana")
+    if not is_fut:
+        pct = total_real / total_meta if total_meta > 0 else 0
+        gap = total_meta - total_real
+        _kpi(c2, "Realizado", _fmt_ton(total_real) + " ton", cor_ritmo(pct), f"{pct:.0%} atingido")
+        _kpi(c3, "Gap", ("▲ " if gap<=0 else "▼ ") + _fmt_ton(abs(gap)) + " ton",
+             COR_VERDE if gap<=0 else COR_VERMELHO,
+             "acima do plano" if gap<=0 else "abaixo do plano")
+    else:
+        _kpi(c2, "Linhas planejadas", str(len(agg)), "#1B4F8A", "com meta S&OE")
+        _kpi(c3, "Status", "Semana futura", "#9AA5B4", "sem realizado")
+    _kpi(c4, "Gerência", gerencia_sel if gerencia_sel != "Todas" else "Todas", status_cor)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if agg.empty:
+        st.info("Nenhuma meta S&OE para esta semana.")
+        return
+
+    # Alertas simples
+    _render_alertas_simples(agg, is_fut)
+
+    # Barras de volume por linha (colunas verticais)
+    st.markdown('<div class="secao-titulo">📦 Volumes por Linha</div>', unsafe_allow_html=True)
+    _render_barras_linha(agg_aj, is_fut, is_past, status_cor)
+
+    st.markdown("---")
+
+    # Clientes + Matriz
+    st.markdown('<div class="secao-titulo">🎯 Inteligência de Clientes</div>', unsafe_allow_html=True)
+    _render_clientes_e_matriz(
+        df_v_raw=df_v_raw,
+        filtros=filtros,
+        gerencia_sel=gerencia_sel,
+        semana_mes=w["semana_mes"],
+        agg_linhas=agg,
+        key_suffix=f"{w['ano']}_{w['mes']}_{w['semana_mes']}_{gerencia_sel}",
+        w=w,
+    )
+
+
+def _render_alertas_simples(agg: pd.DataFrame, is_future: bool) -> None:
+    if not is_future and "real" in agg.columns:
+        linhas_zero = agg[agg["real"] == 0]["linha"].tolist()
+        if linhas_zero:
+            st.warning(
+                f"🔴 Sem realizado: **{', '.join(linhas_zero[:4])}** "
+                "ainda não têm volume registrado nesta semana."
+            )
+            return
+    if is_future:
+        total = agg["meta"].sum()
+        if len(agg) >= 2:
+            top2_pct = agg.nlargest(2,"meta")["meta"].sum() / total if total > 0 else 0
+            if top2_pct >= 0.70:
+                top2_names = ", ".join(agg.nlargest(2,"meta")["linha"].tolist())
+                st.warning(
+                    f"⚠️ Concentração: {top2_pct:.0%} do volume planejado está em "
+                    f"**{top2_names}**. Monitore a disponibilidade de carteira."
+                )
+                return
+        st.info(f"💡 {len(agg)} linhas planejadas · {_fmt_ton(total)} ton de meta S&OE.")
+
+
+def _render_barras_linha(agg, is_future, is_past, cor_destaque):
+    linhas = agg["linha"].tolist()
+    metas  = agg["meta"].tolist()
+    reais  = agg["real"].tolist() if not is_future else [0]*len(linhas)
+
+    cores_real = [
+        cor_destaque if is_future else cor_ritmo(r/m if m>0 else None)
+        for r, m in zip(reais, metas)
+    ]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Meta S&OE", x=linhas, y=metas,
+        marker_color=cor_destaque, opacity=0.30,
+        hovertemplate="<b>%{x}</b><br>Meta: %{customdata} ton<extra></extra>",
+        customdata=[_fmt_ton(v) for v in metas],
+    ))
+    if not is_future:
+        fig.add_trace(go.Bar(
+            name="Realizado", x=linhas, y=reais,
+            marker_color=cores_real,
+            marker_line=dict(color="rgba(0,0,0,0.10)", width=1),
+            text=[f"{r/m:.0%}" if m>0 and r>0 else "" for r,m in zip(reais,metas)],
+            textposition="outside",
+            textfont=dict(size=10, color=COR_TEXTO, family="Arial"),
+            hovertemplate="<b>%{x}</b><br>Realizado: %{customdata} ton<extra></extra>",
+            customdata=[_fmt_ton(v) for v in reais],
+            cliponaxis=False,
+        ))
+    else:
+        fig.update_traces(
+            opacity=0.80,
+            text=[_fmt_ton(v)+" t" if v>0 else "" for v in metas],
+            textposition="outside", textfont=dict(size=9, color=COR_TEXTO),
+            cliponaxis=False, selector={"name":"Meta S&OE"},
+        )
+    y_max = max((max(metas) if metas else 1), 1)*1.38
+    fig.update_layout(
+        barmode="overlay", bargap=0.25, height=360,
+        margin=dict(t=20, b=90, l=60, r=20),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(gridcolor=COR_GRID, tickfont=dict(size=10), tickangle=-38),
+        yaxis=dict(title="Volume (ton)", gridcolor=COR_GRID, range=[0,y_max], tickformat=","),
+        legend=dict(orientation="h", yanchor="top", y=-0.22,
+                    xanchor="center", x=0.5, font=dict(size=11)),
+        font=dict(family="Arial", size=11, color=COR_TEXTO),
+    )
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False},
+                    key=f"det_bar_{id(agg)}")
+
+
+def _render_clientes_e_matriz(
+    df_v_raw, filtros, gerencia_sel, semana_mes, agg_linhas, key_suffix, w: dict | None = None,
+) -> None:
+    from datetime import date as _date
+
+    df_v = df_v_raw.copy()
+    if filtros.get("empresas"):
+        df_v = df_v[df_v["empresa"].isin(filtros["empresas"])]
+    if filtros.get("regioes"):
+        df_v = df_v[df_v["regiao"].isin(filtros["regioes"])]
+    if filtros.get("ufs"):
+        df_v = df_v[df_v["uf"].isin(filtros["ufs"])]
+    if gerencia_sel != "Todas":
+        df_v = _add_gerencia(df_v)
+        df_v = df_v[df_v["gerencia_efetiva"] == gerencia_sel]
+
+    if df_v.empty:
+        st.info("Nenhum histórico disponível para os filtros selecionados.")
+        return
+
+    # ── data_referencia: usa a data da semana selecionada ─────────────────────
+    # Para semanas futuras isso projeta o score como se estivéssemos naquela semana,
+    # ajustando recência, frequência e sazonalidade corretamente.
+    data_ref = None
+    if w:
+        _day_map = {1: 1, 2: 8, 3: 15, 4: 22, 5: 29}
+        try:
+            data_ref = _date(w["ano"], w["mes"], _day_map.get(w["semana_mes"], 1))
+        except Exception:
+            data_ref = None
+
+    # ── Lookup nome + telefone por cd_cliente (mais recente) ─────────────────
+    _lookup_nome = {}
+    _lookup_tel  = {}
+    if "nome_cliente" in df_v_raw.columns:
+        _lk = (df_v_raw.sort_values("data")
+                       .groupby("cd_cliente")[["nome_cliente","telefone_cliente"]]
+                       .last()
+                       .reset_index())
+        _lookup_nome = dict(zip(_lk["cd_cliente"].astype(str), _lk["nome_cliente"].fillna("")))
+        if "telefone_cliente" in _lk.columns:
+            _lookup_tel = dict(zip(_lk["cd_cliente"].astype(str), _lk["telefone_cliente"].fillna("")))
+
+    with st.spinner("Calculando scores e matriz de oportunidades..."):
+        try:
+            df_hash = str(pd.util.hash_pandas_object(df_v).sum())
+            pe, se  = _get_engines(df_v, df_hash)
+            # Passa data_referencia para o engine calcular recência correta
+            df_base = pe.calcular_scores(data_referencia=data_ref)
+            # PropensaoEngine retorna "cliente_id"; SemanalPropensaoEngine e toda a
+            # camada de visualização esperam "cd_cliente" — normaliza aqui.
+            if "cliente_id" in df_base.columns and "cd_cliente" not in df_base.columns:
+                df_base = df_base.rename(columns={"cliente_id": "cd_cliente"})
+            df_sc   = se.score_semana(df_base, semana=semana_mes)
+        except Exception as e:
+            st.error(f"Erro nos engines: {e}")
+            return
+
+    # Injeta nome e telefone no dataframe de scores
+    df_sc["nome_cliente"]    = df_sc["cd_cliente"].astype(str).map(_lookup_nome).fillna("")
+    df_sc["telefone_cliente"] = df_sc["cd_cliente"].astype(str).map(_lookup_tel).fillna("")
+
+    if df_sc.empty:
+        st.info("Nenhum cliente com histórico suficiente.")
+        return
+
+    linhas_com_meta = set(agg_linhas["linha"].tolist())
+    df_sc = df_sc[df_sc["linha"].isin(linhas_com_meta)].copy()
+    if df_sc.empty:
+        st.info("Nenhum cliente ativo nas linhas planejadas.")
+        return
+
+    # Filtros rápidos
+    col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 1.5, 1])
+    linhas_d = sorted(df_sc["linha"].dropna().unique().tolist())
+    ufs_d    = sorted(df_sc["uf"].dropna().unique().tolist())
+    with col_f1:
+        l_f = st.selectbox("Linha", ["Todas"]+linhas_d, key=f"cf_l_{key_suffix}")
+    with col_f2:
+        u_f = st.selectbox("UF", ["Todas"]+ufs_d, key=f"cf_u_{key_suffix}")
+    with col_f3:
+        tm  = {"Todos":"","🔥 Quente":"QUENTE","🌡️ Morno":"MORNO",
+               "🧊 Frio":"FRIO","💤 Dormente":"DORMENTE"}
+        t_f = st.selectbox("Tier", list(tm.keys()), key=f"cf_t_{key_suffix}")
+    with col_f4:
+        top_n = st.number_input("Top N", 10, 500, 50, 10, key=f"cf_n_{key_suffix}")
+
+    df_filt = df_sc.copy()
+    if l_f != "Todas":  df_filt = df_filt[df_filt["linha"] == l_f]
+    if u_f != "Todas":  df_filt = df_filt[df_filt["uf"]    == u_f]
+    if t_f != "Todos":  df_filt = df_filt[df_filt["tier"]  == tm[t_f]]
+    df_filt = df_filt.head(int(top_n))
+
+    if df_filt.empty:
+        st.info("Nenhum cliente para os filtros selecionados.")
+        return
+
+    # Métricas rápidas
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Clientes listados", len(df_filt))
+    mc2.metric("🎯 Padrão confirmado", int(df_filt["padrao_semana_forte"].sum()))
+    mc3.metric("🔥 Quentes", int((df_filt["tier"]=="QUENTE").sum()))
+
+    # Tabs: Matriz | Lista
+    tab_matriz, tab_lista = st.tabs(["📊 Matriz de Oportunidades", "📋 Lista de Clientes"])
+
+    with tab_matriz:
+        st.markdown(
+            '<div style="font-size:12px;color:#8A9BB0;margin-bottom:8px;">'
+            'Eixo X = Score de Propensão Semanal &nbsp;·&nbsp; '
+            'Eixo Y = Volume Médio/Mês &nbsp;·&nbsp; '
+            'Tamanho do ponto = Padrão da Semana &nbsp;·&nbsp; '
+            'Linhas tracejadas = medianas do grupo filtrado.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        _render_matriz_oportunidades(df_filt, key_suffix)
+
+    with tab_lista:
+        _render_tabela_clientes(df_filt, semana_mes, key_suffix)
+
+    # UF breakdown
+    if df_filt["uf"].nunique() > 1:
+        st.markdown('<div class="secao-titulo">🗺️ Distribuição por UF</div>',
+                    unsafe_allow_html=True)
+        _render_uf(df_filt, key_suffix)
+
+
+def _render_tabela_clientes(df: pd.DataFrame, semana: int, key_suffix: str) -> None:
+    _TBG  = {"QUENTE":"#FEF0E6","MORNO":"#FDF5DC","FRIO":"#E8F2FB","DORMENTE":"#F3F5F7"}
+    _TCOR = {"QUENTE":"#C0392B","MORNO":"#8A6000","FRIO":"#1B4F8A","DORMENTE":"#6C7A89"}
+    _TEMO = {"QUENTE":"🔥","MORNO":"🌡️","FRIO":"🧊","DORMENTE":"💤"}
+
+    def _fd(d):
+        try: return pd.Timestamp(d).strftime("%d/%m/%Y")
+        except: return "—"
+
+    def _nome(row) -> str:
+        nome = str(row.get("nome_cliente", "")).strip()
+        cod  = str(row.get("cd_cliente",   "")).strip()
+        return nome if nome and nome not in ("", "nan", cod) else cod
+
+    def _tel(row) -> str:
+        v = str(row.get("telefone_cliente", "")).strip()
+        return v if v and v not in ("", "nan", "None") else "—"
+
+    df_tab = pd.DataFrame({
+        "Rank":           [f"#{i+1}" for i in range(len(df))],
+        "Nome":           df.apply(_nome, axis=1).values,
+        "Telefone":       df.apply(_tel,  axis=1).values,
+        "Linha":          df["linha"].values,
+        "UF":             df["uf"].values,
+        "Tier":           df["tier"].map(lambda t: f"{_TEMO.get(t,'?')} {t.capitalize()}").values,
+        "Score Semanal":  df["score_semanal"].round(1).values,
+        "🎯 Padrão":     df["pct_semana"].apply(lambda v: f"{v:.0%}" if v>0 else "—").values,
+        "Última Compra":  df["ultima_compra"].apply(_fd).values,
+        "Dias s/ Comprar":df["dias_sem_comprar"].values,
+        "Vol. Méd./Mês":  df["volume_medio_mensal"].apply(_fmt_ton).values,
+        "Ação":           df["acao_semanal"].values,
+    })
+
+    def _sty(row):
+        t   = str(df.iloc[row.name]["tier"]) if row.name < len(df) else "DORMENTE"
+        bg  = _TBG.get(t,"#fff")
+        ss  = float(df.iloc[row.name]["score_semanal"])
+        pct = float(df.iloc[row.name]["pct_semana"])
+        out = []
+        for col in row.index:
+            if col == "Score Semanal":
+                c = "#1A7A40" if ss>=60 else "#8A6000" if ss>=30 else "#C0392B"
+                out.append(f"background:{bg};color:{c};font-weight:800;text-align:center;font-size:14px")
+            elif col == "🎯 Padrão":
+                out.append("background:#E8F2FB;color:#1B4F8A;font-weight:700;text-align:center"
+                           if pct>=0.40 else f"background:{bg};text-align:center;color:#9AA5B4")
+            elif col == "Tier":
+                out.append(f"background:{bg};color:{_TCOR.get(t,'#546E7A')};font-weight:700;"
+                           f"text-align:center;font-size:12px")
+            elif col == "Rank":
+                out.append(f"background:{bg};font-weight:700;text-align:center;font-size:11px;color:#546E7A")
+            elif col == "Dias s/ Comprar":
+                try:
+                    d  = int(row[col])
+                    dc = "#C0392B" if d>90 else "#8A6000" if d>45 else "#1A7A40"
+                    out.append(f"background:{bg};color:{dc};font-weight:600;text-align:center")
+                except: out.append(f"background:{bg};text-align:center")
+            elif col in ("UF","Última Compra","Vol. Méd./Mês"):
+                out.append(f"background:{bg};text-align:center")
+            elif col == "Ação":
+                out.append(f"background:{bg};font-size:11px;color:#546E7A")
+            else:
+                out.append(f"background:{bg}")
+        return out
+
+    styled = (
+        df_tab.style.apply(_sty, axis=1)
+        .set_table_styles([{"selector":"th","props":[
+            ("background-color",COR_PRIMARIA),("color","white"),
+            ("font-size","11px"),("text-align","center"),("padding","6px 8px"),
+        ]}])
+    )
+    st.dataframe(styled, use_container_width=True, hide_index=True,
+                 height=min(700,44+len(df_tab)*36), key=f"tab_cl_{key_suffix}")
+
+    # Export
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_e, _ = st.columns([1,3])
+    with col_e:
+        buf = io.BytesIO()
+        cols_exp = ["cd_cliente"]
+        if "nome_cliente"    in df.columns: cols_exp.append("nome_cliente")
+        if "telefone_cliente" in df.columns: cols_exp.append("telefone_cliente")
+        cols_exp += ["linha","uf","regiao","tier",
+                     "score_semanal","pct_semana","score_propensao",
+                     "ultima_compra","dias_sem_comprar",
+                     "volume_medio_mensal","acao_semanal"]
+        df_exp = df[[c for c in cols_exp if c in df.columns]].copy()
+        df_exp["ultima_compra"] = df_exp["ultima_compra"].apply(
+            lambda d: pd.Timestamp(d).strftime("%d/%m/%Y") if pd.notna(d) else "")
+        df_exp["pct_semana"] = df_exp["pct_semana"].apply(lambda v: f"{v:.0%}")
+        col_map = {
+            "cd_cliente": "Código", "nome_cliente": "Nome", "telefone_cliente": "Telefone",
+            "linha": "Linha", "uf": "UF", "regiao": "Região", "tier": "Tier",
+            "score_semanal": "Score Semanal", "pct_semana": "Padrão da Semana",
+            "score_propensao": "Score Base", "ultima_compra": "Última Compra",
+            "dias_sem_comprar": "Dias s/ Comprar", "volume_medio_mensal": "Vol. Méd./Mês (t)",
+            "acao_semanal": "Ação Sugerida",
+        }
+        df_exp.columns = [col_map.get(c, c) for c in df_exp.columns]
+        with pd.ExcelWriter(buf, engine="openpyxl") as wr:
+            df_exp.to_excel(wr, index=False, sheet_name=f"Sem{semana}")
+        st.download_button("📥 Exportar lista (Excel)", data=buf.getvalue(),
+                           file_name=f"lista_sem{semana}_{date.today():%Y%m%d}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key=f"exp_cl_{key_suffix}")
+
+    st.markdown(
+        '<div style="font-size:11px;color:#8A9BB0;margin-top:4px;">'
+        '🎯 <b>Padrão ≥ 40%</b> = cliente compra preferencial nesta semana do mês &nbsp;|&nbsp; '
+        '<b>Score Semanal</b> = Score Base × (1 + 0.40 × Padrão)'
+        '</div>', unsafe_allow_html=True,
+    )
+
+
+def _render_uf(df: pd.DataFrame, key_suffix: str) -> None:
+    uf_agg = (df.groupby("uf").agg(n=("cd_cliente","count"),
+               s=("score_semanal","mean")).reset_index()
+              .sort_values("n",ascending=False).head(15))
+    cores = [cor_ritmo(s/100) for s in uf_agg["s"]]
+    fig   = go.Figure(go.Bar(
+        x=uf_agg["uf"], y=uf_agg["n"],
+        marker_color=cores,
+        text=uf_agg["n"].astype(str), textposition="outside",
+        textfont=dict(size=10, color=COR_TEXTO),
+        hovertemplate="<b>%{x}</b><br>%{y} clientes<br>Score médio: %{customdata:.0f}<extra></extra>",
+        customdata=uf_agg["s"],
+        cliponaxis=False,
+    ))
+    fig.update_layout(
+        height=240, margin=dict(t=8,b=40,l=50,r=20),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(tickfont=dict(size=10), gridcolor=COR_GRID),
+        yaxis=dict(title="Clientes", gridcolor=COR_GRID),
+        font=dict(family="Arial",size=11,color=COR_TEXTO), showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar":False}, key=f"uf_{key_suffix}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPERS VISUAIS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _kpi(col, label: str, valor: str, cor: str, sub: str = "") -> None:
+    col.markdown(
+        f'<div style="background:#fff;border-radius:10px;padding:14px 18px 12px 16px;'
+        f'border-left:4px solid {cor};box-shadow:0 1px 4px rgba(0,0,0,0.06);">'
+        f'<div style="font-size:10px;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:.8px;color:#8A9BB0;margin-bottom:6px;">{label}</div>'
+        f'<div style="font-size:22px;font-weight:800;color:{COR_PRIMARIA};line-height:1.05;">{valor}</div>'
+        f'<div style="font-size:11px;color:#8A9BB0;margin-top:4px;">{sub}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RENDER PRINCIPAL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def render(
+    df_f: pd.DataFrame,
+    df_v_raw: pd.DataFrame,
+    filtros: dict,
+    semana_atual: int,
+    ano_sel: int,
+    mes_sel: int,
+    tw_ranges: list | None = None,
+) -> None:
+    if tw_ranges is None:
+        tw_ranges = [(1,1,7),(2,8,14),(3,15,21),(4,22,31)]
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="aba-header">
+      <h2>🗓️ Plano Comercial Semanal</h2>
+      <p>Horizonte de <b>10 semanas à frente</b> dividido em zonas operacionais.
+         Alertas automáticos de desvio · Matriz de Oportunidades · Simulador What-If.</p>
+    </div>""", unsafe_allow_html=True)
+
+    if "meta_soe" not in df_f.columns or df_f["meta_soe"].sum() == 0:
+        st.info("⚠️ Programa S&OE não disponível para o período selecionado.")
+        return
+
+    # ── Gerência ──────────────────────────────────────────────────────────────
+    df_f = _add_gerencia(df_f)
+    gers_d = sorted(df_f["gerencia_efetiva"].dropna().unique().tolist())
+    opcoes = (["Todas"] +
+              [g for g in GERENCIA_CONFIG if g in gers_d] +
+              [g for g in gers_d if g not in GERENCIA_CONFIG and g != GERENCIA_DESCONHECIDA])
+
+    col_g, col_desc = st.columns([2,4])
+    with col_g:
+        ger_sel = st.selectbox("Gerência", opcoes, key="plano_gerencia",
+                               help="Filtra toda a aba pela gerência")
+    with col_desc:
+        if ger_sel != "Todas" and ger_sel in GERENCIA_CONFIG:
+            cfg   = GERENCIA_CONFIG[ger_sel]
+            regs  = ", ".join(sorted(cfg["regioes"])) or "todas as regiões"
+            fams  = f" | Família {', '.join(cfg['familias_override'])}" if cfg["familias_override"] else ""
+            st.markdown(
+                f'<div style="font-size:12px;color:#8A9BB0;margin-top:28px;">'
+                f'{cfg["emoji"]} <b>{ger_sel}</b>: {regs}{fams}</div>',
+                unsafe_allow_html=True,
+            )
+
+    df_plot = df_f.copy()
+    if ger_sel != "Todas":
+        df_plot = df_plot[df_plot["gerencia_efetiva"] == ger_sel]
+    if df_plot.empty:
+        st.warning("Nenhum dado para a gerência selecionada.")
+        return
+
+    # ── Horizonte ─────────────────────────────────────────────────────────────
+    horizonte = _horizonte_semanas(ano_sel, mes_sel, semana_atual)
+
+    metas, reais = [], []
+    for w in horizonte:
+        df_w = df_plot[(df_plot["ano"]==w["ano"]) &
+                       (df_plot["mes"]==w["mes"]) &
+                       (df_plot["semana_mes"]==w["semana_mes"])]
+        metas.append(float(df_w["meta_soe"].sum()))
+        rv = float(df_w["vol_ton"].sum()) if not _is_future(w,ano_sel,mes_sel,semana_atual) else 0.0
+        reais.append(rv)
+
+    # ── M2: Alertas de Desvio ─────────────────────────────────────────────────
+    alertas = _calc_desvios(df_plot, horizonte)
+    with st.expander("🚨 Alertas de Desvio Crítico de Demanda", expanded=True):
+        _render_alertas_desvio(alertas)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Semana selecionada (session_state) ────────────────────────────────────
+    if "plano_sem_idx" not in st.session_state:
+        st.session_state["plano_sem_idx"] = 0
+
+    # Sincroniza com o radio ANTES de desenhar o gráfico.
+    # O Streamlit grava o valor do widget em st.session_state[key] ANTES de
+    # executar o script, então ao ler "plano_sem_radio" aqui já temos a
+    # escolha atual do usuário — sem o lag de um run.
+    _rk = "plano_sem_radio"
+    if _rk in st.session_state:
+        _rv = st.session_state[_rk]
+        if isinstance(_rv, int) and 0 <= _rv < len(horizonte):
+            st.session_state["plano_sem_idx"] = _rv
+
+    # ── M1: Gráfico com zonas ─────────────────────────────────────────────────
+    st.markdown('<div class="secao-titulo">📈 Horizonte S&OE — Próximas 10 Semanas</div>',
+                unsafe_allow_html=True)
+    _legenda_zonas()
+
+    fig = _graf_horizonte(
+        horizonte, metas, reais, metas,
+        ano_sel, mes_sel, semana_atual,
+        semana_sel_idx=st.session_state["plano_sem_idx"],
+    )
+
+    event = st.plotly_chart(
+        fig, use_container_width=True, config={"displayModeBar": False},
+        on_select="rerun", selection_mode=["points"],
+        key="plano_horizonte_chart",
+    )
+
+    # Clique direto na barra → atualiza e reexecuta imediatamente
+    if event and hasattr(event, "selection") and event.selection:
+        pts = getattr(event.selection, "points", None) or []
+        if pts:
+            try:
+                pt  = pts[0]
+                idx = (pt.get("point_index", pt.get("pointIndex", 0))
+                       if isinstance(pt, dict)
+                       else getattr(pt, "point_index", getattr(pt, "pointIndex", 0)))
+                if 0 <= idx < len(horizonte) and idx != st.session_state["plano_sem_idx"]:
+                    st.session_state["plano_sem_idx"] = idx
+                    st.rerun()
+            except Exception:
+                pass
+
+    # Radio selector
+    st.markdown('<div style="margin:4px 0 2px 0;font-size:12px;color:#8A9BB0;">Ou selecione:</div>',
+                unsafe_allow_html=True)
+    radio_idx = st.radio(
+        "", options=list(range(len(horizonte))),
+        format_func=lambda i: horizonte[i]["label"].replace("\n"," "),
+        index=st.session_state["plano_sem_idx"],
+        horizontal=True, key="plano_sem_radio", label_visibility="collapsed",
+    )
+    # Atualiza (caso o radio mude sem passar pelo sync acima, ex: first render)
+    if radio_idx != st.session_state["plano_sem_idx"]:
+        st.session_state["plano_sem_idx"] = radio_idx
+        st.rerun()
+    semana_sel_idx = st.session_state["plano_sem_idx"]
+
+    st.markdown("---")
+
+    # ── Explorador de Família (entre seletor de semana e painel de detalhes) ──
+    w_sel = horizonte[semana_sel_idx]
+    _render_familia_explorer(
+        df_plot=df_plot,
+        df_v_raw=df_v_raw,
+        w_sel=w_sel,
+        ano_ref=ano_sel,
+        mes_ref=mes_sel,
+        sem_ref=semana_atual,
+    )
+
+    # ── Painel de detalhes ────────────────────────────────────────────────────
+    _render_detalhes_semana(
+        w=w_sel, df_f=df_plot, df_v_raw=df_v_raw,
+        filtros=filtros, gerencia_sel=ger_sel,
+        ano_ref=ano_sel, mes_ref=mes_sel, sem_ref=semana_atual,
+        ajuste={},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXPLORADOR DE FAMÍLIA — imagem do produto + sparkline histórico por linha
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ASSETS_PROD = _Path(__file__).resolve().parent.parent / "assets" / "produtos"
+
+# Alias explícito: nome normalizado da linha → stem do arquivo de imagem.
+# Usado quando o matching automático (P1-P5) não encontra a imagem certa.
+_LINHA_IMG_ALIAS: dict[str, str] = {
+    "CA_50":  "VERGALHAO",
+    "CA_60":  "VERGALHAO",
+    "CA-50":  "VERGALHAO",
+    "CA-60":  "VERGALHAO",
+    "CA50":   "VERGALHAO",
+    "CA60":   "VERGALHAO",
+}
+
+_FAM_EMOJI: dict[str, str] = {
+    "PLANOS": "🔷", "LONGOS": "🔩", "TUBOS": "🔘", "INOX": "✨", "OUTROS": "📦",
+}
+_FAM_COR: dict[str, str] = {
+    "PLANOS": "#1E3A5F", "LONGOS": "#D97706", "TUBOS": "#10B981",
+    "INOX":   "#5C6BC0", "OUTROS": "#64748B",
+}
+
+
+def _map_linha_familia(df_v_raw: pd.DataFrame) -> dict[str, str]:
+    """Extrai {linha: familia} dos dados históricos de vendas."""
+    if "familia" not in df_v_raw.columns:
+        return {}
+    return (
+        df_v_raw[["linha", "familia"]].dropna()
+        .drop_duplicates("linha")
+        .set_index("linha")["familia"]
+        .str.strip().str.upper()
+        .replace({"NAN": "OUTROS", "NONE": "OUTROS", "": "OUTROS"})
+        .to_dict()
+    )
+
+
+def _ascii_upper(s: str) -> str:
+    """Remove acentos e converte para maiúsculo (VERGALHÃO → VERGALHAO)."""
+    return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii").upper()
+
+
+def _find_produto_img(linha: str) -> "tuple[bytes, str] | None":
+    """
+    Localiza imagem do produto com matching progressivo (4 níveis):
+      1. Exato            VERGALHAO      == VERGALHAO
+      2. Linha→stem       CHAPA_GROSSA   começa com CHAPA  (stem sem 'S' final)
+      3. Stem→linha       TUBO           prefixo de TUBO_METALON
+      4. Primeiro token   BOBINA_SLITTER → primeiro token 'BOBINA' é prefixo de BOBININHA
+    Retorna (bytes, mime) ou None.
+    """
+    EXTS = (".png", ".jpg", ".jpeg", ".webp")
+    MIME = {"png": "image/png", "jpg": "image/jpeg",
+            "jpeg": "image/jpeg", "webp": "image/webp"}
+
+    ln = _ascii_upper(linha).replace(" ", "_").replace("/", "_")
+    ln_tok = ln.split("_")[0]          # primeiro token da linha ("BOBINA")
+
+    candidatos: list[tuple[str, _Path]] = []
+    if _ASSETS_PROD.exists():
+        for p in _ASSETS_PROD.iterdir():
+            if p.suffix.lower() in EXTS:
+                candidatos.append((_ascii_upper(p.stem), p))
+
+    def _load(p: _Path) -> "tuple[bytes, str]":
+        return p.read_bytes(), MIME[p.suffix.lower().lstrip(".")]
+
+    # P0 – alias explícito (ex.: CA_50 / CA-50 → VERGALHAO)
+    alias_stem = _LINHA_IMG_ALIAS.get(ln)
+    if alias_stem:
+        for sn, p in candidatos:
+            if sn == alias_stem:
+                return _load(p)
+
+    # P1 – exato
+    for sn, p in candidatos:
+        if ln == sn:
+            return _load(p)
+
+    # P2 – linha começa com raiz do stem (CHAPA_GROSSA → CHAPA[S])
+    for sn, p in candidatos:
+        root = sn.rstrip("S")          # remove plural
+        if ln.startswith(root):
+            return _load(p)
+
+    # P3 – stem é prefixo da linha (TUBO → TUBO_METALON)
+    for sn, p in candidatos:
+        if ln.startswith(sn):
+            return _load(p)
+
+    # P4 – stem é prefixo do primeiro token (BOBININHA → BOBINA...)
+    for sn, p in candidatos:
+        if sn.startswith(ln_tok) and len(ln_tok) >= 4:
+            return _load(p)
+
+    # P5 – prefixo comum contíguo ≥ 5 chars (BOBIN em BOBINA/BOBININHA)
+    for sn, p in candidatos:
+        prefix_len = 0
+        for a, b in zip(ln_tok, sn):
+            if a == b:
+                prefix_len += 1
+            else:
+                break
+        if prefix_len >= 5:
+            return _load(p)
+
+    return None
+
+
+def _img_tag(linha: str) -> str:
+    """
+    Retorna HTML de imagem base64 ou placeholder SVG.
+    Imagens são ~225×157px (paisagem, RGBA) — exibidas com:
+      • width: 100%  (preenche a coluna)
+      • max-height: 88px
+      • object-fit: contain  (sem repuxar)
+      • fundo #F5F7FA  (neutro, respeita transparência RGBA)
+    """
+    result = _find_produto_img(linha)
+    if result:
+        raw, mime = result
+        b64 = base64.b64encode(raw).decode()
+        return (
+            f'<div style="width:100%;background:#F5F7FA;border-radius:8px;'
+            f'overflow:hidden;display:flex;align-items:center;'
+            f'justify-content:center;padding:6px 4px;">'
+            f'<img src="data:{mime};base64,{b64}" '
+            f'style="width:100%;max-height:88px;object-fit:contain;display:block;" />'
+            f'</div>'
+        )
+    # Placeholder
+    return (
+        f'<div style="width:100%;height:88px;border-radius:8px;'
+        f'background:linear-gradient(135deg,#EFF3F8 0%,#E2E8F0 100%);'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'flex-direction:column;gap:4px;border:1px solid #E2E8F0;">'
+        f'<span style="font-size:28px;">🏗️</span>'
+        f'<span style="font-size:8px;color:#94A3B8;font-weight:600;text-align:center;'
+        f'padding:0 4px;line-height:1.2;">{linha[:14]}</span>'
+        f'</div>'
+    )
+
+
+def _prev_semana(ano: int, mes: int, sem: int) -> tuple[int, int, int]:
+    """Retorna (ano, mes, semana) da semana imediatamente anterior."""
+    if sem > 1:
+        return ano, mes, sem - 1
+    # Volta ao mês anterior — usa o total de semanas TW daquele mês
+    if mes > 1:
+        p_mes, p_ano = mes - 1, ano
+    else:
+        p_mes, p_ano = 12, ano - 1
+    n_sem_prev = len(get_month_tw_ranges(p_ano, p_mes))
+    return p_ano, p_mes, n_sem_prev
+
+
+def _next_semana(ano: int, mes: int, sem: int) -> tuple[int, int, int]:
+    """Retorna (ano, mes, semana) da semana imediatamente seguinte."""
+    n_sem = len(get_month_tw_ranges(ano, mes))
+    if sem < n_sem:
+        return ano, mes, sem + 1
+    if mes == 12:
+        return ano + 1, 1, 1
+    return ano, mes + 1, 1
+
+
+def _seq_semanas(
+    ano_sel: int, mes_sel: int, sem_sel: int,
+    n_past: int = 5, n_future: int = 10,
+) -> list[tuple[int, int, int]]:
+    """
+    Gera lista ordenada de (ano, mes, semana) com n_past semanas antes
+    da semana selecionada + semana atual + n_future semanas à frente.
+    """
+    past: list[tuple[int, int, int]] = []
+    a, m, s = ano_sel, mes_sel, sem_sel
+    for _ in range(n_past):
+        a, m, s = _prev_semana(a, m, s)
+        past.insert(0, (a, m, s))
+
+    future: list[tuple[int, int, int]] = []
+    a, m, s = ano_sel, mes_sel, sem_sel
+    for _ in range(n_future):
+        a, m, s = _next_semana(a, m, s)
+        future.append((a, m, s))
+
+    return past + [(ano_sel, mes_sel, sem_sel)] + future
+
+
+def _spark_linha_fig(
+    df_all: pd.DataFrame,
+    linha: str,
+    w_sel: dict,
+    n_past: int = 5,
+    n_future: int = 10,
+) -> go.Figure:
+    """
+    Sparkline semanal contínuo para uma linha:
+    - n_past semanas passadas (realizado + metas)
+    - semana atual destacada
+    - n_future semanas futuras (apenas metas, sem realizado)
+    """
+    FONT  = "Inter, Arial, sans-serif"
+    IDX_C = n_past  # índice da semana atual na sequência
+
+    weeks = _seq_semanas(
+        w_sel["ano"], w_sel["mes"], w_sel["semana_mes"],
+        n_past=n_past, n_future=n_future,
+    )
+
+    rows = []
+    for (a, m, s) in weeks:
+        df_w = df_all[
+            (df_all["ano"] == a) & (df_all["mes"] == m) &
+            (df_all["semana_mes"] == s) & (df_all["linha"] == linha)
+        ]
+        rows.append({
+            "ano": a, "mes": m, "sem": s,
+            "vol": float(df_w["vol_ton"].sum()),
+            "soe": float(df_w["meta_soe"].sum()) if "meta_soe" in df_w.columns else 0.0,
+            "sop": float(df_w["meta_sop"].sum()) if "meta_sop" in df_w.columns else 0.0,
+        })
+
+    fig = go.Figure()
+
+    soes_all = [r["soe"] for r in rows]
+    sops_all = [r["sop"] for r in rows]
+    if sum(soes_all) == 0 and sum(sops_all) == 0:
+        fig.update_layout(
+            height=140,
+            margin=dict(t=4, b=4, l=4, r=4),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(visible=False), yaxis=dict(visible=False),
+            annotations=[dict(
+                x=0.5, y=0.5, xref="paper", yref="paper",
+                text="Sem dados para esta linha",
+                showarrow=False,
+                font=dict(size=10, color="#94A3B8", family=FONT),
+            )],
+        )
+        return fig
+
+    x    = list(range(len(rows)))
+    lbls = [
+        f"S{r['sem']}\n{_MESES_ABR.get(r['mes'], '')}{str(r['ano'])[2:]}"
+        for r in rows
+    ]
+
+    # ── Passado + atual: vol realizado (split em dois segments visuais) ────────
+    # Índices passados + atual
+    x_real   = list(range(IDX_C + 1))                # 0..n_past (inclusive)
+    vols_real = [rows[i]["vol"] for i in x_real]
+    cores_pt  = [
+        cor_ritmo(rows[i]["vol"] / rows[i]["soe"] if rows[i]["soe"] > 0 else None)
+        for i in x_real
+    ]
+
+    # Plano SOP — toda a timeline, cinza pontilhado
+    fig.add_trace(go.Scatter(
+        x=x, y=sops_all, name="SOP",
+        mode="lines",
+        line=dict(color="#CBD5E1", width=1.5, dash="dot"),
+        showlegend=True, hoverinfo="skip",
+    ))
+    # Programa SOE — toda a timeline, âmbar tracejado
+    fig.add_trace(go.Scatter(
+        x=x, y=soes_all, name="SOE",
+        mode="lines",
+        line=dict(color="#D97706", width=1.5, dash="dash"),
+        showlegend=True, hoverinfo="skip",
+    ))
+    # Realizado — apenas passado + semana atual, azul + área
+    fig.add_trace(go.Scatter(
+        x=x_real, y=vols_real, name="Real",
+        mode="lines+markers",
+        line=dict(color="#3B82F6", width=2.5, shape="spline", smoothing=0.6),
+        marker=dict(size=7, color=cores_pt, line=dict(color="white", width=1.5)),
+        fill="tozeroy",
+        fillcolor="rgba(59,130,246,0.07)",
+        showlegend=True,
+        hovertemplate="<b>%{text}</b>: %{customdata}<extra></extra>",
+        text=[lbls[i].replace("\n", " ") for i in x_real],
+        customdata=[f"{_fmt_ton(v)} ton" for v in vols_real],
+    ))
+
+    # ── Destaque na semana atual ───────────────────────────────────────────────
+    fig.add_shape(
+        type="rect", xref="x", yref="paper",
+        x0=IDX_C - 0.45, x1=IDX_C + 0.45, y0=0, y1=1,
+        fillcolor="rgba(30,58,95,0.06)",
+        line=dict(color="rgba(30,58,95,0.30)", width=1, dash="dot"),
+        layer="below",
+    )
+    fig.add_annotation(
+        x=IDX_C, y=1.02, xref="x", yref="paper",
+        text="▼ atual", showarrow=False,
+        font=dict(size=8, color="#1E3A5F", family=FONT),
+        yanchor="bottom",
+    )
+
+    all_vals = [r["vol"] for r in rows] + soes_all + sops_all
+    y_max = max((v for v in all_vals if v > 0), default=1) * 1.30
+
+    fig.update_layout(
+        height=150,
+        margin=dict(t=22, b=28, l=6, r=6),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            visible=True, showgrid=False, zeroline=False,
+            tickvals=x, ticktext=lbls,
+            tickfont=dict(size=7, color="#94A3B8", family=FONT),
+            tickangle=0,
+        ),
+        yaxis=dict(visible=False, showgrid=False, range=[0, y_max]),
+        showlegend=True,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.04,
+            xanchor="right", x=1,
+            font=dict(size=7, color="#64748B", family=FONT),
+            bgcolor="rgba(255,255,255,0)",
+        ),
+        hovermode="x",
+        dragmode=False,
+    )
+    return fig
+
+
+def _card_linha_fig(
+    linha: str,
+    df_plot: pd.DataFrame,
+    w_sel: dict,
+    meta_soe: float,
+    meta_sop: float,
+    real_vol: float,
+    cor_fam: str,
+    is_future: bool,
+) -> go.Figure:
+    """
+    Card integrado para uma linha de produto:
+      ┌──────────────────────────────────────────┐
+      │  HEADER COLORIDO                 [imagem] │
+      │  Nome da linha                            │
+      │  SOE: X t  ·  SOP: Y t                   │
+      │  ● 87% atingido                           │
+      ├──────────────────────────────────────────┤
+      │  sparkline: passado→atual→futuro          │
+      └──────────────────────────────────────────┘
+    Tudo num único go.Figure — sem st.container aninhado.
+    """
+    FONT   = "Inter, Arial, sans-serif"
+    HEIGHT = 300
+    T_MAR  = 112    # px do cabeçalho
+    B_MAR  = 28
+    L_MAR  = 10
+    R_MAR  = 10
+    plot_h = HEIGHT - T_MAR - B_MAR              # 160 px (área de gráfico)
+    y_top  = 1.0 + T_MAR / plot_h                # ≈ 1.70 (topo em paper coords)
+
+    def _yh(px: float) -> float:
+        """Pixel a partir do TOPO do header → coordenada paper y (descendo)."""
+        return y_top - px / plot_h
+
+    def _hex_rgba(hx: str, a: float) -> str:
+        h = hx.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"rgba({r},{g},{b},{a})"
+
+    # ── Dados do sparkline ────────────────────────────────────────────────────
+    N_PAST, N_FUT = 5, 10
+    IDX_C = N_PAST
+    weeks = _seq_semanas(
+        w_sel["ano"], w_sel["mes"], w_sel["semana_mes"],
+        n_past=N_PAST, n_future=N_FUT,
+    )
+    rows = []
+    for (a, m, s) in weeks:
+        dw = df_plot[
+            (df_plot["ano"] == a) & (df_plot["mes"] == m) &
+            (df_plot["semana_mes"] == s) & (df_plot["linha"] == linha)
+        ]
+        vol_ = float(dw["vol_ton"].sum())
+        val_ = float(dw["val_mm"].sum()) if "val_mm" in dw.columns else 0.0
+        rows.append({
+            "vol":   vol_,
+            "soe":   float(dw["meta_soe"].sum()) if "meta_soe" in dw.columns else 0.0,
+            "sop":   float(dw["meta_sop"].sum()) if "meta_sop" in dw.columns else 0.0,
+            "preco": (val_ / vol_ * 1_000) if vol_ > 0 and val_ > 0 else None,
+            "mes": m, "sem": s,
+        })
+
+    x        = list(range(len(rows)))
+    x_real   = list(range(IDX_C + 1))
+    lbls     = [f"S{r['sem']}\n{_MESES_ABR.get(r['mes'], '')}" for r in rows]
+    soes_a   = [r["soe"] for r in rows]
+    sops_a   = [r["sop"] for r in rows]
+    vols_r   = [rows[i]["vol"] for i in x_real]
+    cores_pt = [
+        cor_ritmo(rows[i]["vol"] / rows[i]["soe"] if rows[i]["soe"] > 0 else None)
+        for i in x_real
+    ]
+    has_data = sum(soes_a) > 0 or sum(sops_a) > 0
+
+    fig = go.Figure()
+
+    # ── Traces do sparkline ───────────────────────────────────────────────────
+    if has_data:
+        fig.add_trace(go.Scatter(
+            x=x, y=sops_a, name="SOP",
+            mode="lines",
+            line=dict(color="#CBD5E1", width=1.5, dash="dot"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=x, y=soes_a, name="SOE",
+            mode="lines",
+            line=dict(color="#F59E0B", width=1.8, dash="dash"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=x_real, y=vols_r, name="Real",
+            mode="lines+markers",
+            line=dict(color="#3B82F6", width=2.2, shape="spline", smoothing=0.6),
+            marker=dict(size=6, color=cores_pt, line=dict(color="white", width=1.5)),
+            fill="tozeroy",
+            fillcolor="rgba(59,130,246,0.06)",
+            showlegend=False,
+            hovertemplate="%{text}: %{customdata}<extra></extra>",
+            text=[lbls[i].replace("\n", " ") for i in x_real],
+            customdata=[f"{_fmt_ton(v)} ton" for v in vols_r],
+        ))
+
+        # Linha de preço (eixo secundário, sutil)
+        precos_r = [rows[i]["preco"] for i in x_real]
+        if any(p is not None for p in precos_r):
+            fig.add_trace(go.Scatter(
+                x=x_real, y=precos_r, name="Preço",
+                mode="lines",
+                line=dict(color="rgba(251,113,133,0.55)", width=1.2, shape="spline", smoothing=0.5),
+                yaxis="y2",
+                showlegend=False,
+                hovertemplate="%{text}: R$ %{y:,.0f}/t<extra></extra>",
+                text=[lbls[i].replace("\n", " ") for i in x_real],
+                connectgaps=True,
+            ))
+
+        # Destaque semana atual
+        fig.add_shape(
+            type="rect", xref="x", yref="paper",
+            x0=IDX_C - 0.45, x1=IDX_C + 0.45, y0=0, y1=1,
+            fillcolor="rgba(30,58,95,0.05)",
+            line=dict(color="rgba(30,58,95,0.22)", width=1, dash="dot"),
+            layer="below",
+        )
+        fig.add_annotation(
+            x=IDX_C, y=1.02, xref="x", yref="paper",
+            text="▼ atual", showarrow=False,
+            font=dict(size=7, color="#1E3A5F", family=FONT),
+            yanchor="bottom",
+        )
+
+        # Micro-legenda inline (fundo transparente, não cobre nada)
+        fig.add_annotation(
+            x=0.01, y=0.98, xref="paper", yref="paper",
+            text=(
+                '<span style="color:#3B82F6">▬</span> Real'
+                '  <span style="color:#F59E0B">╌</span> SOE'
+                '  <span style="color:#CBD5E1">⋯</span> SOP'
+            ),
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=7, color="#94A3B8", family=FONT),
+        )
+
+    # ── Header: background shape ──────────────────────────────────────────────
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0, x1=1, y0=1.0, y1=y_top,
+        fillcolor=_hex_rgba(cor_fam, 0.32),
+        line_width=0, layer="above",
+    )
+    # Barra superior sólida (4 px de destaque)
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0, x1=1, y0=_yh(5), y1=y_top,
+        fillcolor=_hex_rgba(cor_fam, 0.40),
+        line_width=0, layer="above",
+    )
+
+    # ── Imagem do produto (lado direito do header) ────────────────────────────
+    img_result = _find_produto_img(linha)
+    if img_result:
+        raw, mime = img_result
+        b64 = base64.b64encode(raw).decode()
+        # sizey em coordenadas paper = pixels / plot_h
+        fig.add_layout_image(
+            source=f"data:{mime};base64,{b64}",
+            xref="paper", yref="paper",
+            x=0.97,
+            y=_yh(7),                              # pequena margem do topo
+            xanchor="right",
+            yanchor="top",
+            sizex=0.45,                            # ~45% da largura paper
+            sizey=(T_MAR - 12) / plot_h,           # quase toda a altura do header
+            sizing="contain",
+            layer="above",
+            opacity=0.92,
+        )
+
+    # ── Anotações KPI no header ───────────────────────────────────────────────
+    # Nome da linha (destaque principal)
+    nome_txt = linha if len(linha) <= 18 else linha[:17] + "…"
+    fig.add_annotation(
+        x=0.04, y=_yh(14),
+        xref="paper", yref="paper",
+        text=f"<b>{nome_txt}</b>",
+        showarrow=False, xanchor="left", yanchor="top",
+        font=dict(size=13, color="white", family=FONT),
+    )
+    # Meta SOE
+    fig.add_annotation(
+        x=0.04, y=_yh(38),
+        xref="paper", yref="paper",
+        text=f"SOE  <b>{_fmt_ton(meta_soe)} t</b>",
+        showarrow=False, xanchor="left", yanchor="top",
+        font=dict(size=11, color="rgba(255,255,255,0.90)", family=FONT),
+    )
+    # Meta SOP (se disponível)
+    if meta_sop > 0:
+        fig.add_annotation(
+            x=0.04, y=_yh(57),
+            xref="paper", yref="paper",
+            text=f"SOP  {_fmt_ton(meta_sop)} t",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=10, color="rgba(255,255,255,0.62)", family=FONT),
+        )
+    # Ritmo / status (badge com mini highlight)
+    if not is_future and meta_soe > 0:
+        rit     = real_vol / meta_soe
+        rit_hex = cor_ritmo(rit)
+        rit_txt = f"{rit:.0%}"
+        fig.add_annotation(
+            x=0.04, y=_yh(78),
+            xref="paper", yref="paper",
+            text=f"<b>{rit_txt}</b> atingido",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=11, color=rit_hex, family=FONT),
+            bgcolor="rgba(255,255,255,0.14)",
+            borderpad=4,
+            bordercolor="rgba(255,255,255,0.22)",
+            borderwidth=1,
+        )
+    elif is_future:
+        fig.add_annotation(
+            x=0.04, y=_yh(78),
+            xref="paper", yref="paper",
+            text="📅 Semana futura",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=10, color="rgba(255,255,255,0.55)", family=FONT),
+        )
+    else:
+        fig.add_annotation(
+            x=0.04, y=_yh(78),
+            xref="paper", yref="paper",
+            text="— sem realizado",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=10, color="rgba(255,255,255,0.50)", family=FONT),
+        )
+
+    # ── Borda do card ─────────────────────────────────────────────────────────
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0, x1=1, y0=0, y1=y_top,
+        fillcolor="rgba(0,0,0,0)",
+        line=dict(color="rgba(170,185,210,0.50)", width=1),
+        layer="above",
+    )
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    all_vals = [r["vol"] for r in rows] + soes_a + sops_a
+    y_max    = max((v for v in all_vals if v > 0), default=100) * 1.30
+
+    fig.update_layout(
+        height=HEIGHT,
+        margin=dict(t=T_MAR, b=B_MAR, l=L_MAR, r=R_MAR),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            visible=has_data,
+            showgrid=False, zeroline=False,
+            tickvals=x       if has_data else [],
+            ticktext=lbls    if has_data else [],
+            tickfont=dict(size=7, color="#94A3B8", family=FONT),
+            tickangle=0,
+        ),
+        yaxis=dict(visible=False, range=[0, y_max]),
+        yaxis2=dict(
+            overlaying="y", side="right",
+            visible=False, showgrid=False, zeroline=False,
+        ),
+        showlegend=False,
+        hovermode="x",
+        dragmode=False,
+        font=dict(family=FONT, size=10, color="#334155"),
+    )
+    return fig
+
+
+def _render_familia_explorer(
+    df_plot: pd.DataFrame,
+    df_v_raw: pd.DataFrame,
+    w_sel: dict,
+    ano_ref: int,
+    mes_ref: int,
+    sem_ref: int,
+) -> None:
+    """
+    Seção interativa: selecione uma família → grid 2 colunas com cartão por linha.
+    Cada cartão mostra: imagem do produto + KPIs da semana + sparkline histórico.
+    """
+    semana_mes_sel = w_sel["semana_mes"]
+
+    # Dados da semana selecionada
+    df_sem = df_plot[
+        (df_plot["ano"] == w_sel["ano"]) &
+        (df_plot["mes"] == w_sel["mes"]) &
+        (df_plot["semana_mes"] == semana_mes_sel)
+    ]
+    meta_por_linha = df_sem.groupby("linha")["meta_soe"].sum()
+    linhas_ativas  = meta_por_linha[meta_por_linha > 0].index.tolist()
+
+    if not linhas_ativas:
+        return
+
+    lf_map = _map_linha_familia(df_v_raw)
+
+    fam_linhas: dict[str, list[str]] = {}
+    for ln in linhas_ativas:
+        fam = lf_map.get(ln, "OUTROS")
+        if fam in ("NAN", "NONE", ""):
+            fam = "OUTROS"
+        fam_linhas.setdefault(fam, []).append(ln)
+
+    if not fam_linhas:
+        return
+
+    st.markdown('<div class="secao-titulo">📦 Explorar por Família</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:11px;color:#94A3B8;margin:-6px 0 12px 0;">'
+        'Selecione uma família para ver o histórico semanal de cada linha '
+        '(Realizado × SOP × SOE) com imagem do produto.</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Botões de família ──────────────────────────────────────────────────
+    _SK = "plano_familia_sel"
+    if _SK not in st.session_state:
+        st.session_state[_SK] = None
+
+    familias_ord = sorted(fam_linhas.keys())
+    n_cols_btn   = min(len(familias_ord) + 1, 7)
+    btn_cols     = st.columns(n_cols_btn)
+
+    with btn_cols[0]:
+        if st.button("✕ Limpar", key="plano_fam_clear", type="secondary",
+                     use_container_width=True):
+            st.session_state[_SK] = None
+            st.rerun()
+
+    for i, fam in enumerate(familias_ord):
+        emoji  = _FAM_EMOJI.get(fam, "📦")
+        n_ln   = len(fam_linhas[fam])
+        col_i  = btn_cols[min(i + 1, n_cols_btn - 1)]
+        is_sel = st.session_state.get(_SK) == fam
+        with col_i:
+            if st.button(
+                f"{emoji} {fam} ({n_ln})",
+                key=f"plano_fam_{fam}",
+                type="primary" if is_sel else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state[_SK] = fam if not is_sel else None
+                st.rerun()
+
+    fam_sel = st.session_state.get(_SK)
+
+    if not fam_sel or fam_sel not in fam_linhas:
+        st.markdown("<br>", unsafe_allow_html=True)
+        return
+
+    # ── Grid de cards ─────────────────────────────────────────────────────
+    cor_fam   = _FAM_COR.get(fam_sel, "#1E3A5F")
+    emoji_fam = _FAM_EMOJI.get(fam_sel, "📦")
+    linhas_s  = sorted(fam_linhas[fam_sel])
+    is_future = _is_future(w_sel, ano_ref, mes_ref, sem_ref)
+
+    st.markdown(
+        f'<div style="font-size:13px;font-weight:700;color:{cor_fam};'
+        f'margin:8px 0 10px 0;">'
+        f'{emoji_fam} {fam_sel} — {len(linhas_s)} '
+        f'linha{"s" if len(linhas_s) != 1 else ""} ativas nesta semana</div>',
+        unsafe_allow_html=True,
+    )
+
+    for idx_l in range(0, len(linhas_s), 2):
+        par           = linhas_s[idx_l: idx_l + 2]
+        col_a, col_b  = st.columns(2, gap="small")
+        card_cols     = [col_a, col_b]
+
+        for j, linha in enumerate(par):
+            df_l      = df_sem[df_sem["linha"] == linha]
+            meta_soe_ = float(df_l["meta_soe"].sum())
+            meta_sop_ = float(df_l["meta_sop"].sum()) if "meta_sop" in df_l.columns else 0.0
+            real_l    = float(df_l["vol_ton"].sum())
+
+            with card_cols[j]:
+                st.plotly_chart(
+                    _card_linha_fig(
+                        linha=linha,
+                        df_plot=df_plot,
+                        w_sel=w_sel,
+                        meta_soe=meta_soe_,
+                        meta_sop=meta_sop_,
+                        real_vol=real_l,
+                        cor_fam=cor_fam,
+                        is_future=is_future,
+                    ),
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                    key=(
+                        f"card_{linha.replace(' ','_').replace('/','_')}"
+                        f"_s{semana_mes_sel}_{idx_l}_{j}"
+                    ),
+                )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
+def _legenda_zonas() -> None:
+    st.markdown(
+        '<div style="font-size:12px;color:#8A9BB0;margin-bottom:8px;">'
+        '<span style="color:#C0392B;font-weight:700;">🔒 Zona Congelada</span> '
+        'TW atual + TW+1 — execução agressiva da carteira &nbsp;·&nbsp; '
+        '<span style="color:#1A7A40;font-weight:700;">🔄 Zona Líquida</span> '
+        'TW+2 a TW+4 — ajuste e remanejamento de metas &nbsp;·&nbsp; '
+        '<span style="color:#546E7A;font-weight:700;">📡 Zona Fluida</span> '
+        'TW+5 em diante — projeção estatística e tendências &nbsp;·&nbsp; '
+        '<b>Clique na coluna para detalhar.</b>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
