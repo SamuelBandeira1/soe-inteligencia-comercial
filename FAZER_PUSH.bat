@@ -69,7 +69,7 @@ echo  [2/2] Enviando para HF Spaces...
 echo.
 
 echo    [2a] Codigo (git push)...
-git push hf !BRANCH!:main
+git push hf !BRANCH!:main --force
 if errorlevel 1 (
     echo  [ERRO] Falha no push de codigo para HF.
     pause
