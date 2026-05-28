@@ -11,6 +11,14 @@ echo   S^&OE - Subir versao para GitHub e HF Spaces
 echo  ========================================================
 echo.
 
+if not exist "venv\Scripts\python.exe" (
+    echo  [ERRO] Ambiente virtual nao encontrado em venv\
+    pause
+    exit /b 1
+)
+
+set PY=venv\Scripts\python.exe
+
 :: Detecta branch atual
 for /f "tokens=*" %%b in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set BRANCH=%%b
 if "!BRANCH!"=="" (
@@ -21,7 +29,7 @@ if "!BRANCH!"=="" (
 
 echo  Branch atual: !BRANCH!
 echo.
-echo  Arquivos de codigo modificados:
+echo  Arquivos modificados:
 git status --short
 echo.
 
@@ -37,7 +45,7 @@ if /i not "!CONFIRM!"=="S" (
 ::  (dados ficam fora pelo .gitignore)
 :: =========================================================
 echo.
-echo  [1/3] Commitando e enviando codigo para GitHub...
+echo  [1/2] Enviando codigo para GitHub...
 git add -A
 git commit -m "atualizacao %date%"
 if errorlevel 1 (
@@ -52,56 +60,38 @@ if errorlevel 1 (
 echo  [OK] GitHub atualizado.
 
 :: =========================================================
-::  PASSO 2 - Commit de CODIGO + DADOS para HF Spaces
-::  Forcamos os parquets que estao no .gitignore
+::  PASSO 2 - Envia CODIGO via git + DADOS via API para HF
+::  Parquets sao grandes demais para git normal (>10 MB)
+::  O script extrai o token automaticamente do remote 'hf'
 :: =========================================================
 echo.
-echo  [2/3] Preparando dados para HF Spaces...
+echo  [2/2] Enviando para HF Spaces...
+echo.
 
-if not exist "data\processed\vendas_filtrada.parquet" (
-    echo  [ERRO] vendas_filtrada.parquet nao encontrado.
-    echo  Rode o ATUALIZAR_E_RODAR.bat primeiro.
-    pause
-    exit /b 1
-)
-
-git add -f data\processed\vendas_filtrada.parquet
-if exist "data\processed\meta_semanal.parquet" (
-    git add -f data\processed\meta_semanal.parquet
-)
-if exist "data\processed\vendas_unificada.parquet" (
-    git add -f data\processed\vendas_unificada.parquet
-)
-
-git commit -m "dados atualizados %date%"
-
-echo  Enviando para HF Spaces (main)...
+echo    [2a] Codigo (git push)...
 git push hf !BRANCH!:main
 if errorlevel 1 (
-    echo  [ERRO] Falha no push para HF Spaces.
-    :: Desfaz o commit de dados antes de sair
-    git reset HEAD~1
+    echo  [ERRO] Falha no push de codigo para HF.
     pause
     exit /b 1
 )
-echo  [OK] HF Spaces atualizado - rebuild iniciado!
+echo    [OK] Codigo enviado.
 
-:: =========================================================
-::  PASSO 3 - Desfaz o commit de dados localmente
-::  Os parquets voltam a ser ignorados pelo .gitignore
-::  O GitHub nao recebe os dados em hipotese alguma
-:: =========================================================
 echo.
-echo  [3/3] Limpando commit de dados do historico local...
-git reset HEAD~1
-echo  [OK] Historico local limpo. Dados nao foram para o GitHub.
+echo    [2b] Dados (API upload - pode demorar)...
+%PY% scripts\upload_dados_hf.py
+if errorlevel 1 (
+    echo  [ERRO] Falha no upload dos dados para HF.
+    pause
+    exit /b 1
+)
 
 echo.
 echo  ========================================================
 echo   Tudo pronto!
 echo   - Codigo atualizado no GitHub
 echo   - Codigo + Dados atualizados no HF Spaces
-echo   - Rebuild do dashboard iniciado
+echo   - Dashboard sera reiniciado automaticamente
 echo  ========================================================
 echo.
 pause
