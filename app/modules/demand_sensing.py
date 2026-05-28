@@ -258,8 +258,9 @@ def _render_kpis(m: dict) -> None:
 
     def _kpi(col, label, valor, sub, cor, tooltip=""):
         col.markdown(f"""
-        <div style="background:#fff;border-radius:10px;padding:16px 18px;
-                    border-top:4px solid {cor};box-shadow:0 2px 8px rgba(0,0,0,.08);">
+        <div style="background:#FFFFFF;border-radius:12px;padding:16px 18px;
+                    border-top:4px solid {cor};box-shadow:0 1px 3px rgba(0,0,0,0.06),0 4px 12px rgba(0,0,0,0.04);
+                    border:1px solid #E2E8F0;">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;
                       letter-spacing:.6px;color:#6C757D;margin-bottom:4px">{label}</div>
           <div style="font-size:32px;font-weight:900;color:{COR_PRIMARIA};line-height:1">{valor}</div>
@@ -411,7 +412,7 @@ def _render_volume_historico(df_hist: pd.DataFrame, kp: str) -> None:
         x=list(labels) + list(labels[::-1]),
         y=[mae]*len(labels) + [-mae]*len(labels),
         fill="toself",
-        fillcolor="rgba(244,130,42,0.08)",
+        fillcolor="rgba(59,130,246,0.08)",
         line=dict(color="rgba(0,0,0,0)"),
         yaxis="y2",
         name=f"MAE ±{_fmt_ton(mae)} ton",
@@ -855,7 +856,7 @@ def _render_monte_carlo(
         x=labels + labels[::-1],
         y=list(p90) + list(p10[::-1]),
         fill="toself",
-        fillcolor="rgba(244,130,42,0.12)",
+        fillcolor="rgba(59,130,246,0.08)",
         line=dict(color="rgba(0,0,0,0)"),
         name="Faixa P10–P90 (80% das simulações)",
         hoverinfo="skip",
@@ -866,7 +867,7 @@ def _render_monte_carlo(
         x=labels + labels[::-1],
         y=list(p75) + list(p25[::-1]),
         fill="toself",
-        fillcolor="rgba(244,130,42,0.30)",
+        fillcolor="rgba(59,130,246,0.18)",
         line=dict(color="rgba(0,0,0,0)"),
         name="Faixa P25–P75 (50% das simulações)",
         hoverinfo="skip",

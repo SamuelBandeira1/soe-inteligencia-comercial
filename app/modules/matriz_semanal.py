@@ -41,14 +41,14 @@ _ZMIN, _ZMAX = -0.10, 1.30
 #   z= 0.95 → pos (1.05/1.40)=0.750 → verde claro
 #   z= 1.30 → pos (1.40/1.40)=1.000 → verde escuro
 _COLORSCALE = [
-    [0.000, '#E0E0E0'],  # futuro (cinza neutro)
-    [0.071, '#C0392B'],  # 0%   → vermelho crítico
-    [0.250, '#C0392B'],  # 25%  → vermelho médio
-    [0.429, '#B07D00'],  # 50%  → âmbar escuro
-    [0.607, '#C9A84C'],  # 75%  → âmbar claro
-    [0.750, '#6BAE8A'],  # 95%  → verde médio
-    [0.857, '#1A7A40'],  # 100% → verde
-    [1.000, '#0D4A28'],  # 130% → verde escuro (acima do plano)
+    [0.000, '#F1F5F9'],  # futuro (cinza neutro)
+    [0.071, '#FEF2F2'],  # 0% → vermelho muito suave
+    [0.250, '#FECACA'],  # 25% → vermelho suave
+    [0.429, '#FDE68A'],  # 50% → âmbar suave
+    [0.607, '#FEF3C7'],  # 75% → âmbar claro
+    [0.750, '#A7F3D0'],  # 95% → verde menta
+    [0.857, '#10B981'],  # 100% → esmeralda
+    [1.000, '#059669'],  # 130% → esmeralda escuro
 ]
 
 

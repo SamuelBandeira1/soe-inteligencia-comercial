@@ -61,45 +61,33 @@ st.markdown(
 
 st.markdown("""
 <style>
-  /* ════════════════════════════════════════
-     FONTE GLOBAL
-  ════════════════════════════════════════ */
+  /* ════ FONTE ════ */
   html, body, [class*="css"], .stApp, .stMarkdown, button, input, select {
     font-family: 'Inter', sans-serif !important;
   }
 
-  /* ════════════════════════════════════════
-     FUNDO DARK
-  ════════════════════════════════════════ */
-  .stApp { background-color: #0F172A !important; }
-  .main  { background-color: #0F172A !important; }
+  /* ════ FUNDO ════ */
+  .stApp { background-color: #F8FAFC !important; }
 
-  /* ── Header Streamlit transparente ── */
+  /* ════ HEADER STREAMLIT ════ */
   header[data-testid="stHeader"] {
-    background: transparent !important;
-    box-shadow: none !important;
+    background: #F8FAFC !important;
+    box-shadow: 0 1px 0 #E2E8F0 !important;
   }
 
-  /* ── Layout principal ── */
+  /* ════ LAYOUT ════ */
   .block-container {
     padding-top: 3.5rem !important;
     padding-left: 2rem !important;
     padding-right: 2rem !important;
     max-width: 1400px !important;
   }
-
-  /* ── Oculta elementos padrão ── */
   #MainMenu, footer { visibility: hidden; }
 
-  /* ── Texto padrão dark ── */
-  .stMarkdown, .stMarkdown p, .stText { color: #CBD5E1 !important; }
-
-  /* ════════════════════════════════════════
-     SIDEBAR
-  ════════════════════════════════════════ */
+  /* ════ SIDEBAR ════ */
   [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0D1B2E 0%, #132040 100%) !important;
-    border-right: 1px solid rgba(255,255,255,0.06) !important;
+    background: linear-gradient(180deg, #0F2440 0%, #1E3A5F 100%) !important;
+    border-right: none !important;
   }
   [data-testid="stSidebar"] * { color: #CBD5E1 !important; }
   [data-testid="stSidebar"] .stMarkdown p,
@@ -111,11 +99,11 @@ st.markdown("""
     letter-spacing: 0.8px !important;
   }
   [data-testid="stSidebar"] hr {
-    border-color: rgba(255,255,255,0.07) !important;
+    border-color: rgba(255,255,255,0.08) !important;
     margin: 10px 0 !important;
   }
   [data-testid="stSidebar"] [data-baseweb="select"] {
-    background: rgba(255,255,255,0.05) !important;
+    background: rgba(255,255,255,0.06) !important;
     border-radius: 8px !important;
     border: 1px solid rgba(255,255,255,0.10) !important;
   }
@@ -124,34 +112,29 @@ st.markdown("""
     background: transparent !important;
   }
   [data-testid="stSidebar"] [data-baseweb="tag"] {
-    background: rgba(217,107,45,0.30) !important;
+    background: rgba(217,119,6,0.25) !important;
     border: none !important;
   }
-  /* Botão Sair na sidebar */
   [data-testid="stSidebar"] .stButton > button {
-    background: rgba(255,255,255,0.07) !important;
+    background: rgba(255,255,255,0.08) !important;
     color: #CBD5E1 !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
-    font-size: 13px !important;
   }
   [data-testid="stSidebar"] .stButton > button:hover {
-    background: rgba(217,107,45,0.25) !important;
-    border-color: #D96B2D !important;
-    color: #fff !important;
+    background: rgba(217,119,6,0.20) !important;
+    border-color: #D97706 !important;
   }
 
-  /* ════════════════════════════════════════
-     TABS
-  ════════════════════════════════════════ */
+  /* ════ TABS ════ */
   [data-testid="stTabs"] [role="tablist"] {
-    background: rgba(30,41,59,0.80);
+    background: #FFFFFF;
     border-radius: 12px;
     padding: 4px;
     gap: 2px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.30);
-    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    border: 1px solid #E2E8F0;
     margin-bottom: 20px;
   }
   [data-testid="stTabs"] [role="tab"] {
@@ -159,42 +142,41 @@ st.markdown("""
     font-weight: 600 !important;
     font-size: 13px !important;
     padding: 8px 18px !important;
-    color: #64748B !important;
+    color: #94A3B8 !important;
     border: none !important;
-    transition: all 0.2s ease !important;
+    transition: all 0.15s ease !important;
     background: transparent !important;
   }
   [data-testid="stTabs"] [role="tab"]:hover {
-    background: rgba(255,255,255,0.06) !important;
-    color: #CBD5E1 !important;
+    background: #F1F5F9 !important;
+    color: #1E3A5F !important;
   }
   [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
-    background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%) !important;
+    background: #1E3A5F !important;
     color: white !important;
-    box-shadow: 0 2px 12px rgba(79,70,229,0.50) !important;
+    box-shadow: 0 2px 8px rgba(30,58,95,0.25) !important;
   }
   [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { color: white !important; }
   [data-testid="stTabs"] [role="tab"] div[data-testid="stMarkdownContainer"] p { font-weight: 600 !important; }
   .stTabs [data-baseweb="tab-highlight"] { display: none !important; }
   .stTabs [data-baseweb="tab-border"]    { display: none !important; }
 
-  /* ════════════════════════════════════════
-     CARDS KPI
-  ════════════════════════════════════════ */
+  /* ════ CARDS ════ */
   .card {
-    background: linear-gradient(135deg, #1E293B 0%, #1A2540 100%);
-    border-radius: 16px;
+    background: #FFFFFF;
+    border-radius: 14px;
     padding: 18px 22px 16px 20px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
     margin-bottom: 8px;
-    border-left: 4px solid #4F46E5;
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
+    border: 1px solid #E2E8F0;
+    border-left: 4px solid #1E3A5F;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
   }
   .card:hover {
-    box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.10);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.10);
     transform: translateY(-1px);
   }
-  .card-acento  { border-left-color: #D96B2D; }
+  .card-acento  { border-left-color: #D97706; }
   .card-verde   { border-left-color: #10B981; }
   .card-amarelo { border-left-color: #F59E0B; }
   .card-vermelho{ border-left-color: #EF4444; }
@@ -204,19 +186,19 @@ st.markdown("""
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1.2px;
-    color: #475569;
+    color: #94A3B8;
     margin-bottom: 6px;
   }
   .card-value {
     font-size: 28px;
     font-weight: 800;
-    color: #F1F5F9;
+    color: #1E293B;
     line-height: 1.05;
     letter-spacing: -0.8px;
   }
   .card-sub {
     font-size: 11px;
-    color: #475569;
+    color: #64748B;
     margin-top: 6px;
     display: flex;
     align-items: center;
@@ -226,32 +208,27 @@ st.markdown("""
   .card-delta-neg { color: #EF4444; font-weight: 700; }
   .card-delta-neu { color: #F59E0B; font-weight: 700; }
 
-  /* ════════════════════════════════════════
-     SEÇÃO TÍTULOS
-  ════════════════════════════════════════ */
+  /* ════ SEÇÃO TÍTULOS ════ */
   .secao-titulo {
     font-size: 11px;
     font-weight: 700;
-    color: #64748B;
+    color: #94A3B8;
     margin: 28px 0 14px 0;
     padding: 0 0 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    border-bottom: 1px solid #E2E8F0;
     display: block;
     letter-spacing: 1.5px;
     text-transform: uppercase;
   }
 
-  /* ════════════════════════════════════════
-     ABA HEADER
-  ════════════════════════════════════════ */
+  /* ════ ABA HEADER ════ */
   .aba-header {
-    background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+    background: linear-gradient(135deg, #1E3A5F 0%, #0F2440 100%);
     color: white;
     padding: 22px 28px;
-    border-radius: 16px;
+    border-radius: 14px;
     margin-bottom: 24px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.40);
-    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: 0 4px 20px rgba(30,58,95,0.20);
   }
   .aba-header h2 {
     color: #F1F5F9;
@@ -260,14 +237,10 @@ st.markdown("""
     font-weight: 800;
     letter-spacing: -0.3px;
   }
-  .aba-header p {
-    color: #64748B;
-    margin: 0;
-    font-size: 12.5px;
-  }
+  .aba-header p { color: #94A3B8; margin: 0; font-size: 12.5px; }
   .badge-semana {
     display: inline-block;
-    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    background: #D97706;
     color: white;
     padding: 3px 12px;
     border-radius: 20px;
@@ -276,37 +249,31 @@ st.markdown("""
     margin-left: 10px;
     letter-spacing: 0.3px;
     vertical-align: middle;
-    box-shadow: 0 2px 8px rgba(79,70,229,0.40);
   }
 
-  /* ════════════════════════════════════════
-     TABELA
-  ════════════════════════════════════════ */
+  /* ════ TABELA ════ */
   .tabela-head {
-    background: #1E293B;
-    color: #94A3B8;
+    background: #1E3A5F;
+    color: white;
     font-weight: 700;
     font-size: 10px;
     padding: 10px 8px;
     text-align: center;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
   }
   .tabela-cell {
     font-size: 12px;
     padding: 7px 9px;
     text-align: right;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    color: #CBD5E1;
+    border-bottom: 1px solid #F1F5F9;
+    color: #1E293B;
   }
 
-  /* ════════════════════════════════════════
-     GLOBAL HEADER
-  ════════════════════════════════════════ */
+  /* ════ GLOBAL HEADER ════ */
   .global-header {
     padding: 6px 0 18px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    border-bottom: 1px solid #E2E8F0;
     margin-bottom: 24px;
     display: flex;
     align-items: center;
@@ -315,12 +282,12 @@ st.markdown("""
   .global-header-title {
     font-size: 22px;
     font-weight: 800;
-    color: #F1F5F9;
+    color: #1E3A5F;
     letter-spacing: -0.5px;
   }
   .global-header-sub {
     font-size: 13px;
-    color: #475569;
+    color: #94A3B8;
     font-weight: 400;
     margin-left: 8px;
   }
@@ -328,21 +295,16 @@ st.markdown("""
     font-size: 12px;
     color: #64748B;
     font-weight: 500;
-    background: rgba(255,255,255,0.05);
+    background: white;
     padding: 6px 16px;
     border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.09);
+    border: 1px solid #E2E8F0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
 
-  /* ════════════════════════════════════════
-     ALERTA BANNER
-  ════════════════════════════════════════ */
-  .stAlert { border-radius: 12px !important; }
-
-  /* ════════════════════════════════════════
-     DATAFRAME / TABELAS NATIVAS
-  ════════════════════════════════════════ */
+  /* ════ DATAFRAME NATIVO ════ */
   [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+  [data-testid="stDataFrame"] table { background: white !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -469,62 +431,217 @@ def ritmo_pct(realizado, meta_mes, pesos, linha, semana_atual):
 
 
 
-# ── Template padrão de layout para todos os gráficos — DARK THEME ───────────
+# ── Template padrão de layout para todos os gráficos — LIGHT PREMIUM ────────
 _FONT_CHART  = 'Inter, Arial, sans-serif'
-_GRID_COLOR  = 'rgba(255,255,255,0.05)'
-_AXIS_COLOR  = '#475569'
-_BG_PLOT     = '#1E293B'
+_GRID_COLOR  = '#E2E8F0'
+_AXIS_COLOR  = '#94A3B8'
+_BG_PLOT     = '#FFFFFF'
 _BG_PAPER    = 'rgba(0,0,0,0)'
 
-# Paleta de cores para gráficos dark
-_COR_REALIZADO = '#6366F1'   # indigo vibrante
-_COR_META      = '#334155'   # cinza azulado (fundo)
-_COR_PROJ      = 'rgba(99,102,241,0.15)'
-_COR_CTG       = '#F59E0B'   # âmbar — close-the-gap
-_COR_GAP_POS   = '#10B981'   # verde esmeralda
-_COR_GAP_NEG   = '#EF4444'   # vermelho
-_COR_WEEKEND   = 'rgba(255,255,255,0.08)'
+_COR_REALIZADO = '#3B82F6'
+_COR_META      = '#CBD5E1'
+_COR_PROJ      = 'rgba(59,130,246,0.08)'
+_COR_CTG       = '#D97706'
+_COR_GAP_POS   = '#10B981'
+_COR_GAP_NEG   = '#EF4444'
+_COR_WEEKEND   = '#F1F5F9'
 
 def _base_layout(**kwargs):
-    """Retorna dict de layout Plotly com estilo premium dark."""
+    """Retorna dict de layout Plotly com estilo light premium."""
     base = dict(
         paper_bgcolor=_BG_PAPER,
         plot_bgcolor=_BG_PLOT,
-        font=dict(family=_FONT_CHART, size=11, color='#94A3B8'),
+        font=dict(family=_FONT_CHART, size=11, color='#1E293B'),
         legend=dict(
             orientation='h',
             yanchor='bottom', y=1.02,
             xanchor='right', x=1,
-            font=dict(size=11, family=_FONT_CHART, color='#94A3B8'),
-            bgcolor='rgba(15,23,42,0.80)',
-            bordercolor='rgba(255,255,255,0.10)',
+            font=dict(size=11, family=_FONT_CHART, color='#64748B'),
+            bgcolor='rgba(255,255,255,0.92)',
+            bordercolor='#E2E8F0',
             borderwidth=1,
         ),
         xaxis=dict(
             gridcolor=_GRID_COLOR, gridwidth=1,
-            linecolor='rgba(255,255,255,0.08)', linewidth=1,
+            linecolor='#E2E8F0', linewidth=1,
             tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
             title_font=dict(size=12, color=_AXIS_COLOR, family=_FONT_CHART),
-            showspikes=True, spikecolor='rgba(255,255,255,0.20)',
+            showspikes=True, spikecolor='#CBD5E1',
             spikethickness=1, spikedash='dot',
             zeroline=False,
         ),
         yaxis=dict(
             gridcolor=_GRID_COLOR, gridwidth=1,
-            linecolor='rgba(255,255,255,0.08)', linewidth=1,
+            linecolor='#E2E8F0', linewidth=1,
             tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
             title_font=dict(size=12, color=_AXIS_COLOR, family=_FONT_CHART),
-            zeroline=True, zerolinecolor='rgba(255,255,255,0.08)', zerolinewidth=1,
+            zeroline=True, zerolinecolor='#E2E8F0', zerolinewidth=1,
         ),
         hoverlabel=dict(
-            bgcolor='#1E293B',
-            bordercolor='rgba(255,255,255,0.15)',
-            font=dict(size=12, family=_FONT_CHART, color='#F1F5F9'),
+            bgcolor='white',
+            bordercolor='#E2E8F0',
+            font=dict(size=12, family=_FONT_CHART, color='#1E293B'),
         ),
         margin=dict(t=24, b=48, l=56, r=20),
     )
     base.update(kwargs)
     return base
+
+
+# ── Sparkline Card Plotly — KPI + histórico MoM ───────────────────────────────
+def make_sparkline_card(
+    values, labels, cor_linha, fill_rgba,
+    titulo, valor_txt, delta_txt, delta_pos,
+    sub_txt='', height=200,
+):
+    """
+    Card all-in-one: cabeçalho KPI (via annotations no margin superior)
+    + mini gráfico de linha histórico + linha de tendência (regressão linear).
+    """
+    # ── Sanitiza valores ──────────────────────────────────────────────
+    y_raw = []
+    for v in values:
+        if v is None or (isinstance(v, float) and np.isnan(v)) or v == 0:
+            y_raw.append(None)
+        else:
+            y_raw.append(float(v))
+
+    has_data = [v is not None for v in y_raw]
+
+    # Interpolação linear para pontos sem dado (continuidade visual)
+    y_filled = list(y_raw)
+    for i in range(len(y_filled)):
+        if y_filled[i] is None:
+            prev = next((y_raw[j] for j in range(i - 1, -1, -1) if y_raw[j] is not None), None)
+            nxt  = next((y_raw[j] for j in range(i + 1, len(y_raw)) if y_raw[j] is not None), None)
+            if prev is not None and nxt is not None:
+                y_filled[i] = (prev + nxt) / 2
+            elif prev is not None:
+                y_filled[i] = prev
+            elif nxt is not None:
+                y_filled[i] = nxt
+            else:
+                y_filled[i] = 0
+
+    x = list(range(len(y_filled)))
+    n = len(y_filled)
+
+    # ── Math: annotations no margin t ────────────────────────────────
+    t_margin = 90
+    b_margin = 22
+    plot_h   = max(height - t_margin - b_margin, 1)
+    y_fig_top = 1.0 + t_margin / plot_h   # coord paper no topo da figura
+
+    def _y(px_from_top):
+        return y_fig_top - px_from_top / plot_h
+
+    fig = go.Figure()
+
+    if n >= 2:
+        # ── Área preenchida ───────────────────────────────────────────
+        fig.add_trace(go.Scatter(
+            x=x, y=y_filled,
+            mode='lines',
+            line=dict(color=cor_linha, width=2.5, shape='spline', smoothing=0.7),
+            fill='tozeroy',
+            fillcolor=fill_rgba,
+            showlegend=False,
+            hoverinfo='none',
+        ))
+
+        # ── Tendência: regressão linear tracejada ─────────────────────
+        x_arr = np.array(x, dtype=float)
+        y_arr = np.array(y_filled, dtype=float)
+        m_c, b_c = np.polyfit(x_arr, y_arr, 1)
+        trend_y  = list(m_c * x_arr + b_c)
+        trend_rgba = fill_rgba.replace('0.08)', '0.40)')
+        fig.add_trace(go.Scatter(
+            x=x, y=trend_y,
+            mode='lines',
+            line=dict(color=trend_rgba, width=1.5, dash='dot'),
+            showlegend=False,
+            hoverinfo='none',
+            opacity=0.8,
+        ))
+
+        # ── Marcador no último ponto real ─────────────────────────────
+        last_real = max((i for i, h in enumerate(has_data) if h), default=n - 1)
+        fig.add_trace(go.Scatter(
+            x=[last_real], y=[y_filled[last_real]],
+            mode='markers',
+            marker=dict(size=9, color=cor_linha,
+                        line=dict(color='white', width=2.5)),
+            showlegend=False,
+            hoverinfo='none',
+        ))
+
+    # ── Cor e ícone da variação ───────────────────────────────────────
+    delta_cor  = '#10B981' if delta_pos else '#EF4444'
+    delta_icon = '▲' if delta_pos else '▼'
+
+    annotations = [
+        dict(x=0.04, y=_y(12), xref='paper', yref='paper',
+             text=titulo.upper(),
+             showarrow=False, xanchor='left', yanchor='middle',
+             font=dict(size=9, color='#94A3B8', family=_FONT_CHART)),
+        dict(x=0.04, y=_y(43), xref='paper', yref='paper',
+             text=f'<b>{valor_txt}</b>',
+             showarrow=False, xanchor='left', yanchor='middle',
+             font=dict(size=20, color=cor_linha, family=_FONT_CHART)),
+        dict(x=0.04, y=_y(70), xref='paper', yref='paper',
+             text=f'<b>{delta_icon}</b> {delta_txt}',
+             showarrow=False, xanchor='left', yanchor='middle',
+             font=dict(size=11, color=delta_cor, family=_FONT_CHART)),
+    ]
+
+    if sub_txt:
+        annotations.append(dict(
+            x=0.96, y=_y(12), xref='paper', yref='paper',
+            text=sub_txt,
+            showarrow=False, xanchor='right', yanchor='middle',
+            font=dict(size=9, color='#64748B', family=_FONT_CHART),
+        ))
+
+    shapes = [
+        # Barra colorida no topo (4px)
+        dict(type='rect', xref='paper', yref='paper',
+             x0=0, y0=y_fig_top - 4 / plot_h, x1=1, y1=y_fig_top,
+             fillcolor=cor_linha, line=dict(width=0), layer='above'),
+        # Borda do card
+        dict(type='rect', xref='paper', yref='paper',
+             x0=0, y0=0, x1=1, y1=y_fig_top,
+             fillcolor='rgba(0,0,0,0)',
+             line=dict(color='#E2E8F0', width=1), layer='above'),
+        # Separador header / sparkline
+        dict(type='line', xref='paper', yref='paper',
+             x0=0, y0=1.0, x1=1, y1=1.0,
+             line=dict(color='#F1F5F9', width=1)),
+    ]
+
+    y_max_sp = max((v for v in y_filled if v), default=1) * 1.30 or 1
+
+    fig.update_layout(
+        height=height,
+        margin=dict(t=t_margin, b=b_margin, l=10, r=10),
+        paper_bgcolor='#FFFFFF',
+        plot_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(
+            visible=True, showgrid=False, showline=False, zeroline=False,
+            tickvals=x, ticktext=[lbl[:3] for lbl in labels],
+            tickfont=dict(size=8, color='#B0BAC9', family=_FONT_CHART),
+            tickangle=0, fixedrange=True,
+        ),
+        yaxis=dict(
+            visible=False, showgrid=False,
+            range=[0, y_max_sp], fixedrange=True,
+        ),
+        showlegend=False,
+        hovermode=False,
+        dragmode=False,
+        annotations=annotations,
+        shapes=shapes,
+    )
+    return fig
 
 
 # ── Gauge Plotly ──────────────────────────────────────────────────────────────
@@ -551,7 +668,7 @@ def make_gauge(valor_pct, titulo, height=180):
                 'nticks': 7,
             },
             'bar': {'color': cor, 'thickness': 0.68},
-            'bgcolor': '#1E293B',
+            'bgcolor': '#F8FAFC',
             'borderwidth': 0,
             'steps': [
                 {'range': [0,  75],  'color': 'rgba(239,68,68,0.15)'},
@@ -589,8 +706,8 @@ def make_gauge(valor_pct, titulo, height=180):
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font={'family': _FONT_CHART, 'color': '#94A3B8'},
-        hoverlabel=dict(bgcolor='#1E293B', bordercolor='rgba(255,255,255,0.15)',
-                        font=dict(size=12, family=_FONT_CHART, color='#F1F5F9')),
+        hoverlabel=dict(bgcolor='white', bordercolor='#E2E8F0',
+                        font=dict(size=12, family=_FONT_CHART, color='#1E293B')),
     )
     return fig
 
@@ -827,7 +944,7 @@ def graf_linhas(df_linha, col_meta, pesos):
     # ── Meta acumulada ──
     fig.add_trace(go.Bar(
         name='Meta acum.', x=linhas, y=meta_ac,
-        marker_color='#334155',
+        marker_color='#CBD5E1',
         marker_line=dict(color='rgba(255,255,255,0.10)', width=1),
         opacity=0.90,
         hovertemplate='<b>%{x}</b><br>Meta acum.: <b>%{customdata} ton</b><extra></extra>',
@@ -966,7 +1083,7 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
     fig.add_trace(go.Bar(
         name=col_meta_label,
         x=nomes, y=meta_vals,
-        marker_color='#334155', opacity=0.90,
+        marker_color='#CBD5E1', opacity=0.90,
         marker_line=dict(color='rgba(255,255,255,0.08)', width=1),
         text=[_fmt_ton(v) if v > 0 else '' for v in meta_vals],
         textposition='inside',
@@ -1342,7 +1459,28 @@ def render_aba(df_f, df_v_raw, pesos, col_meta, label_meta,
     _vp_sinal     = '+' if (var_preco or 0) >= 0 else ''
     var_preco_txt = f'{_vp_sinal}{var_preco:.1%}' if var_preco is not None else '—'
 
-    c1, c2, c3, c4 = st.columns([1, 1.1, 0.9, 0.9])
+    # ── Histórico mensal para sparklines (últimos 7 meses) ───────────
+    _HIST_N = 7
+    _hist_months = []
+    _a_h, _m_h = ano_sel, mes_sel
+    for _ in range(_HIST_N):
+        _hist_months.insert(0, (_a_h, _m_h))
+        _m_h -= 1
+        if _m_h == 0:
+            _m_h = 12
+            _a_h -= 1
+
+    _hist_vol, _hist_preco, _hist_val, _hist_lbl = [], [], [], []
+    for (_a_h, _m_h) in _hist_months:
+        _df_h = df_f[(df_f['ano'] == _a_h) & (df_f['mes'] == _m_h)]
+        _v  = _df_h['vol_ton'].sum()
+        _vl = _df_h['val_mm'].sum()
+        _hist_vol.append(_v if _v > 0 else None)
+        _hist_val.append(_vl / 1000 if _vl > 0 else None)
+        _hist_preco.append((_vl / _v * 1000) if _v > 0 else None)
+        _hist_lbl.append(MESES[_m_h][:3])
+
+    c1, c2, c3, c4 = st.columns([1, 1.1, 1, 1])
 
     with c1:
         fig_g = make_gauge(ritmo_geral or 0.0, 'Ritmo Geral', height=200)
@@ -1352,50 +1490,52 @@ def render_aba(df_f, df_v_raw, pesos, col_meta, label_meta,
         st.markdown(_gauge_sub(total_real_vol, meta_acum_esp), unsafe_allow_html=True)
 
     with c2:
-        html_vol = (
-            '<div style="background:#fff;border-radius:8px;padding:14px 16px;'
-            f'border-top:4px solid {cor_vol};box-shadow:0 2px 8px rgba(0,0,0,.07);height:100%">'
-            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;'
-            'letter-spacing:.6px;color:#6C757D;margin-bottom:4px">VOLUME REALIZADO</div>'
-            f'<div style="font-size:26px;font-weight:800;color:{cor_vol};line-height:1.1;'
-            f'margin-bottom:8px">{_fmt_ton(total_real_vol)} ton</div>'
-            f'<div style="font-size:11px;color:#2C3E50;margin-bottom:3px">Meta acum.: <b>{_fmt_ton(meta_acum_esp)} ton</b> &nbsp;|&nbsp; '
-            f'<span style="color:{cor_vol}">{desvio_sinal}{_fmt_ton(desvio_abs)} ton {desvio_pct_txt}</span></div>'
-            f'<div style="font-size:11px;color:#2C3E50;margin-bottom:3px">Proj. mes: <b>{_fmt_ton(proj_vol_geral)} ton</b> '
-            f'<span style="color:{ating_cor}">({ating_txt})</span></div>'
-            f'<div style="font-size:11px">Gap: <span style="color:{gap_cor};font-weight:700">{gap_label}</span> &nbsp;|&nbsp; '
-            f'<span style="color:{var_vol_cor}">{var_vol_txt}</span></div>'
-            '</div>'
+        _vol_delta_txt = (f'{_vv_sinal}{var_vol_mm:.1%} vs mês ant.'
+                          if var_vol_mm is not None else 'sem histórico')
+        fig_sp_vol = make_sparkline_card(
+            values=_hist_vol, labels=_hist_lbl,
+            cor_linha=_COR_REALIZADO, fill_rgba='rgba(59,130,246,0.08)',
+            titulo='Volume Realizado',
+            valor_txt=f'{_fmt_ton(total_real_vol)} ton',
+            delta_txt=_vol_delta_txt,
+            delta_pos=(var_vol_mm or 0) >= 0,
+            sub_txt=f'Proj: {_fmt_ton(proj_vol_geral)} ton',
         )
-        st.markdown(html_vol, unsafe_allow_html=True)
+        st.plotly_chart(fig_sp_vol, use_container_width=True,
+                        config={'displayModeBar': False},
+                        key=f'{col_meta}_spark_vol')
 
     with c3:
-        html_preco = (
-            '<div style="background:#fff;border-radius:8px;padding:14px 16px;'
-            'border-top:4px solid #F4822A;box-shadow:0 2px 8px rgba(0,0,0,.07);height:100%">'
-            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;'
-            'letter-spacing:.6px;color:#6C757D;margin-bottom:4px">PRECO MEDIO</div>'
-            f'<div style="font-size:26px;font-weight:800;color:#1B2A4A;line-height:1.1;'
-            f'margin-bottom:8px">{preco_txt}</div>'
-            f'<div style="font-size:11px;color:#2C3E50;margin-bottom:3px">Mes ant.: <b>{preco_ant_txt}</b></div>'
-            f'<div style="font-size:11px;color:#2C3E50">Variacao: <span style="color:{var_preco_cor};font-weight:700">{var_preco_txt}</span></div>'
-            '</div>'
+        _preco_delta_txt = (f'{_vp_sinal}{var_preco:.1%} vs mês ant.'
+                            if var_preco is not None else '—')
+        fig_sp_preco = make_sparkline_card(
+            values=_hist_preco, labels=_hist_lbl,
+            cor_linha='#D97706', fill_rgba='rgba(217,119,6,0.08)',
+            titulo='Preço Médio',
+            valor_txt=(preco_txt if preco_real else '—'),
+            delta_txt=_preco_delta_txt,
+            delta_pos=(var_preco or 0) >= 0,
+            sub_txt=(f'Ant: {preco_ant_txt}' if preco_ant else ''),
         )
-        st.markdown(html_preco, unsafe_allow_html=True)
+        st.plotly_chart(fig_sp_preco, use_container_width=True,
+                        config={'displayModeBar': False},
+                        key=f'{col_meta}_spark_preco')
 
     with c4:
-        html_val = (
-            '<div style="background:#fff;border-radius:8px;padding:14px 16px;'
-            'border-top:4px solid #1B2A4A;box-shadow:0 2px 8px rgba(0,0,0,.07);height:100%">'
-            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;'
-            'letter-spacing:.6px;color:#6C757D;margin-bottom:4px">VALOR REALIZADO</div>'
-            f'<div style="font-size:26px;font-weight:800;color:#1B2A4A;line-height:1.1;'
-            f'margin-bottom:8px">R$ {val_mm_disp:.1f} MM</div>'
-            f'<div style="font-size:11px;color:#2C3E50;margin-bottom:3px">Proj. mes: <b>R$ {proj_val_mm:.1f} MM</b></div>'
-            f'<div style="font-size:11px;color:{var_val_cor}">{var_val_txt}</div>'
-            '</div>'
+        _val_delta_txt = (f'{_vval_sinal}{var_val_mm:.1%} vs mês ant.'
+                          if var_val_mm is not None else '')
+        fig_sp_val = make_sparkline_card(
+            values=_hist_val, labels=_hist_lbl,
+            cor_linha='#1E3A5F', fill_rgba='rgba(30,58,95,0.08)',
+            titulo='Valor Realizado',
+            valor_txt=f'R$ {val_mm_disp:.1f} MM',
+            delta_txt=_val_delta_txt,
+            delta_pos=(var_val_mm or 0) >= 0,
+            sub_txt=f'Proj: R$ {proj_val_mm:.1f} MM',
         )
-        st.markdown(html_val, unsafe_allow_html=True)
+        st.plotly_chart(fig_sp_val, use_container_width=True,
+                        config={'displayModeBar': False},
+                        key=f'{col_meta}_spark_val')
 
     st.markdown('<br>', unsafe_allow_html=True)
 

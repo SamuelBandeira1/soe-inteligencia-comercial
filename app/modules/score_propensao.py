@@ -35,22 +35,21 @@ from utils.visual import (
 
 # ── Tier config ───────────────────────────────────────────────────────────────
 TIER_CONFIG = {
-    "QUENTE":   {"emoji": "🔥", "cor_bg": "#FEF0E6", "cor_txt": "#C0392B", "label": "Quente"},
-    "MORNO":    {"emoji": "🌡️", "cor_bg": "#FDF5DC", "cor_txt": "#8A6000", "label": "Morno"},
-    "FRIO":     {"emoji": "🧊", "cor_bg": "#E8F2FB", "cor_txt": "#1B4F8A", "label": "Frio"},
-    "DORMENTE": {"emoji": "💤", "cor_bg": "#F3F5F7", "cor_txt": "#6C7A89", "label": "Dormente"},
+    "QUENTE":   {"emoji": "🔥", "cor_bg": "#FEF2F2", "cor_txt": "#DC2626", "label": "Quente"},
+    "MORNO":    {"emoji": "🌡️", "cor_bg": "#FFFBEB", "cor_txt": "#D97706", "label": "Morno"},
+    "FRIO":     {"emoji": "🧊", "cor_bg": "#EFF6FF", "cor_txt": "#2563EB", "label": "Frio"},
+    "DORMENTE": {"emoji": "💤", "cor_bg": "#F8FAFC", "cor_txt": "#64748B", "label": "Dormente"},
 }
 
 
 # ── Helpers visuais ───────────────────────────────────────────────────────────
 def _badge_score(score: float) -> str:
-    """Badge HTML com faixa e valor do índice."""
     if score >= 60:
-        bg, cor, label = "#D6EDE0", "#1A7A40", "ALTO"
+        bg, cor, label = "#ECFDF5", "#059669", "ALTO"
     elif score >= 30:
-        bg, cor, label = "#F5E9C8", "#8A6000", "MÉDIO"
+        bg, cor, label = "#FFFBEB", "#D97706", "MÉDIO"
     else:
-        bg, cor, label = "#F5D5D1", "#C0392B", "BAIXO"
+        bg, cor, label = "#FEF2F2", "#DC2626", "BAIXO"
     return (
         f'<span style="background:{bg};color:{cor};font-weight:700;'
         f'font-size:11px;padding:2px 8px;border-radius:10px;">'
@@ -68,9 +67,9 @@ def _fmt_data(d) -> str:
 
 
 def _cor_score(score: float) -> str:
-    if score >= 60: return "#1A7A40"
-    if score >= 30: return "#8A6000"
-    return "#C0392B"
+    if score >= 60: return "#059669"
+    if score >= 30: return "#D97706"
+    return "#DC2626"
 
 
 def _badge_tier(tier: str) -> str:
@@ -141,11 +140,12 @@ def _render_metricas(df_scores: pd.DataFrame, total_populacao: int) -> None:
             if subtexto else ""
         )
         col.markdown(
-            f'<div style="background:#fff;border-radius:10px;padding:12px 14px;'
-            f'border-left:4px solid {cor};box-shadow:0 2px 6px rgba(0,0,0,.07);">'
+            f'<div style="background:#FFFFFF;border-radius:12px;padding:14px 16px;'
+            f'border-left:4px solid {cor};box-shadow:0 1px 3px rgba(0,0,0,0.06),0 4px 12px rgba(0,0,0,0.04);'
+            f'border:1px solid #E2E8F0;">'
             f'<div style="font-size:10px;font-weight:700;text-transform:uppercase;'
-            f'letter-spacing:.5px;color:#6C757D;margin-bottom:4px">{label}</div>'
-            f'<div style="font-size:24px;font-weight:800;color:{COR_PRIMARIA}">{valor}</div>'
+            f'letter-spacing:.8px;color:#94A3B8;margin-bottom:6px">{label}</div>'
+            f'<div style="font-size:22px;font-weight:800;color:#1E293B;letter-spacing:-0.5px">{valor}</div>'
             f'{sub_html}'
             f'</div>',
             unsafe_allow_html=True,
@@ -203,9 +203,10 @@ def _render_top_urgentes(df_scores: pd.DataFrame) -> None:
         rank_num  = i + 1
 
         cols[i].markdown(
-            f'<div style="background:#fff;border-radius:10px;padding:14px 16px;'
+            f'<div style="background:#FFFFFF;border-radius:12px;padding:16px 18px;'
             f'border-left:4px solid {cor_score};'
-            f'box-shadow:0 3px 10px rgba(0,0,0,.10);">'
+            f'box-shadow:0 1px 3px rgba(0,0,0,0.06),0 4px 16px rgba(0,0,0,0.06);'
+            f'border:1px solid #E2E8F0;">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
             f'  <span style="font-size:11px;font-weight:700;color:#9EA8B3">#{rank_num} PRIORIDADE</span>'
             f'  <span style="font-size:18px;font-weight:900;color:{cor_score}">{score:.0f}</span>'
@@ -267,8 +268,8 @@ def _render_distribuicao(df_scores: pd.DataFrame) -> None:
             title_font=dict(size=12), title_x=0,
             margin=dict(t=40, b=40, l=50, r=20),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(title="Faixa do Índice", tickfont=dict(size=10), gridcolor="#E8ECF0"),
-            yaxis=dict(title="Clientes", gridcolor="#E8ECF0"),
+            xaxis=dict(title="Faixa do Índice", tickfont=dict(size=10), gridcolor="#E2E8F0"),
+            yaxis=dict(title="Clientes", gridcolor="#E2E8F0"),
             font=dict(family="Arial", size=11, color=COR_TEXTO),
             showlegend=False,
         )
@@ -280,7 +281,7 @@ def _render_distribuicao(df_scores: pd.DataFrame) -> None:
         tier_counts = df_scores["tier"].value_counts()
         tier_order  = ["QUENTE", "MORNO", "FRIO", "DORMENTE"]
         tier_vals   = [tier_counts.get(t, 0) for t in tier_order]
-        tier_colors = ["#C0392B", "#8A6000", "#1B4F8A", "#6C7A89"]
+        tier_colors = ["#EF4444", "#F59E0B", "#3B82F6", "#94A3B8"]
         tier_labels = [f"{TIER_CONFIG[t]['emoji']} {TIER_CONFIG[t]['label']}" for t in tier_order]
 
         fig2 = go.Figure(go.Bar(
@@ -296,8 +297,8 @@ def _render_distribuicao(df_scores: pd.DataFrame) -> None:
             title_font=dict(size=12), title_x=0,
             margin=dict(t=40, b=40, l=30, r=20),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(tickfont=dict(size=11), gridcolor="#E8ECF0"),
-            yaxis=dict(title="Clientes", gridcolor="#E8ECF0"),
+            xaxis=dict(tickfont=dict(size=11), gridcolor="#E2E8F0"),
+            yaxis=dict(title="Clientes", gridcolor="#E2E8F0"),
             font=dict(family="Arial", size=11, color=COR_TEXTO),
             showlegend=False,
         )
@@ -484,7 +485,7 @@ def _render_tabela(df_scores: pd.DataFrame, total_populacao: int) -> None:
                 ("font-size", "11px"), ("text-align", "center"), ("padding", "6px 8px"),
             ]},
         ])
-        .format({"Tier": _fmt_tier})
+        .format({"Tier": _fmt_tier, "Índice": lambda x: f"{x:.1f}"})
     )
 
     st.dataframe(

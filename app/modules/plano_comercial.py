@@ -33,8 +33,11 @@ Constraints de design (Google Material / não-AI aesthetic)
 """
 from __future__ import annotations
 
+import base64
 import io
+import unicodedata
 from datetime import date
+from pathlib import Path as _Path
 
 import numpy as np
 import pandas as pd
@@ -1364,6 +1367,16 @@ def render(
     if "plano_sem_idx" not in st.session_state:
         st.session_state["plano_sem_idx"] = 0
 
+    # Sincroniza com o radio ANTES de desenhar o gráfico.
+    # O Streamlit grava o valor do widget em st.session_state[key] ANTES de
+    # executar o script, então ao ler "plano_sem_radio" aqui já temos a
+    # escolha atual do usuário — sem o lag de um run.
+    _rk = "plano_sem_radio"
+    if _rk in st.session_state:
+        _rv = st.session_state[_rk]
+        if isinstance(_rv, int) and 0 <= _rv < len(horizonte):
+            st.session_state["plano_sem_idx"] = _rv
+
     # ── M1: Gráfico com zonas ─────────────────────────────────────────────────
     st.markdown('<div class="secao-titulo">📈 Horizonte S&OE — Próximas 10 Semanas</div>',
                 unsafe_allow_html=True)
@@ -1381,16 +1394,18 @@ def render(
         key="plano_horizonte_chart",
     )
 
-    if event and hasattr(event,"selection") and event.selection:
-        pts = getattr(event.selection,"points",None) or []
+    # Clique direto na barra → atualiza e reexecuta imediatamente
+    if event and hasattr(event, "selection") and event.selection:
+        pts = getattr(event.selection, "points", None) or []
         if pts:
             try:
                 pt  = pts[0]
-                idx = (pt.get("point_index", pt.get("pointIndex",0))
-                       if isinstance(pt,dict)
-                       else getattr(pt,"point_index", getattr(pt,"pointIndex",0)))
-                if 0 <= idx < len(horizonte):
+                idx = (pt.get("point_index", pt.get("pointIndex", 0))
+                       if isinstance(pt, dict)
+                       else getattr(pt, "point_index", getattr(pt, "pointIndex", 0)))
+                if 0 <= idx < len(horizonte) and idx != st.session_state["plano_sem_idx"]:
                     st.session_state["plano_sem_idx"] = idx
+                    st.rerun()
             except Exception:
                 pass
 
@@ -1403,20 +1418,774 @@ def render(
         index=st.session_state["plano_sem_idx"],
         horizontal=True, key="plano_sem_radio", label_visibility="collapsed",
     )
+    # Atualiza (caso o radio mude sem passar pelo sync acima, ex: first render)
     if radio_idx != st.session_state["plano_sem_idx"]:
         st.session_state["plano_sem_idx"] = radio_idx
+        st.rerun()
     semana_sel_idx = st.session_state["plano_sem_idx"]
 
     st.markdown("---")
 
-    # ── Painel de detalhes ────────────────────────────────────────────────────
+    # ── Explorador de Família (entre seletor de semana e painel de detalhes) ──
     w_sel = horizonte[semana_sel_idx]
+    _render_familia_explorer(
+        df_plot=df_plot,
+        df_v_raw=df_v_raw,
+        w_sel=w_sel,
+        ano_ref=ano_sel,
+        mes_ref=mes_sel,
+        sem_ref=semana_atual,
+    )
+
+    # ── Painel de detalhes ────────────────────────────────────────────────────
     _render_detalhes_semana(
         w=w_sel, df_f=df_plot, df_v_raw=df_v_raw,
         filtros=filtros, gerencia_sel=ger_sel,
         ano_ref=ano_sel, mes_ref=mes_sel, sem_ref=semana_atual,
         ajuste={},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXPLORADOR DE FAMÍLIA — imagem do produto + sparkline histórico por linha
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ASSETS_PROD = _Path(__file__).resolve().parent.parent / "assets" / "produtos"
+
+# Alias explícito: nome normalizado da linha → stem do arquivo de imagem.
+# Usado quando o matching automático (P1-P5) não encontra a imagem certa.
+_LINHA_IMG_ALIAS: dict[str, str] = {
+    "CA_50":  "VERGALHAO",
+    "CA_60":  "VERGALHAO",
+    "CA-50":  "VERGALHAO",
+    "CA-60":  "VERGALHAO",
+    "CA50":   "VERGALHAO",
+    "CA60":   "VERGALHAO",
+}
+
+_FAM_EMOJI: dict[str, str] = {
+    "PLANOS": "🔷", "LONGOS": "🔩", "TUBOS": "🔘", "INOX": "✨", "OUTROS": "📦",
+}
+_FAM_COR: dict[str, str] = {
+    "PLANOS": "#1E3A5F", "LONGOS": "#D97706", "TUBOS": "#10B981",
+    "INOX":   "#5C6BC0", "OUTROS": "#64748B",
+}
+
+
+def _map_linha_familia(df_v_raw: pd.DataFrame) -> dict[str, str]:
+    """Extrai {linha: familia} dos dados históricos de vendas."""
+    if "familia" not in df_v_raw.columns:
+        return {}
+    return (
+        df_v_raw[["linha", "familia"]].dropna()
+        .drop_duplicates("linha")
+        .set_index("linha")["familia"]
+        .str.strip().str.upper()
+        .replace({"NAN": "OUTROS", "NONE": "OUTROS", "": "OUTROS"})
+        .to_dict()
+    )
+
+
+def _ascii_upper(s: str) -> str:
+    """Remove acentos e converte para maiúsculo (VERGALHÃO → VERGALHAO)."""
+    return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii").upper()
+
+
+def _find_produto_img(linha: str) -> "tuple[bytes, str] | None":
+    """
+    Localiza imagem do produto com matching progressivo (4 níveis):
+      1. Exato            VERGALHAO      == VERGALHAO
+      2. Linha→stem       CHAPA_GROSSA   começa com CHAPA  (stem sem 'S' final)
+      3. Stem→linha       TUBO           prefixo de TUBO_METALON
+      4. Primeiro token   BOBINA_SLITTER → primeiro token 'BOBINA' é prefixo de BOBININHA
+    Retorna (bytes, mime) ou None.
+    """
+    EXTS = (".png", ".jpg", ".jpeg", ".webp")
+    MIME = {"png": "image/png", "jpg": "image/jpeg",
+            "jpeg": "image/jpeg", "webp": "image/webp"}
+
+    ln = _ascii_upper(linha).replace(" ", "_").replace("/", "_")
+    ln_tok = ln.split("_")[0]          # primeiro token da linha ("BOBINA")
+
+    candidatos: list[tuple[str, _Path]] = []
+    if _ASSETS_PROD.exists():
+        for p in _ASSETS_PROD.iterdir():
+            if p.suffix.lower() in EXTS:
+                candidatos.append((_ascii_upper(p.stem), p))
+
+    def _load(p: _Path) -> "tuple[bytes, str]":
+        return p.read_bytes(), MIME[p.suffix.lower().lstrip(".")]
+
+    # P0 – alias explícito (ex.: CA_50 / CA-50 → VERGALHAO)
+    alias_stem = _LINHA_IMG_ALIAS.get(ln)
+    if alias_stem:
+        for sn, p in candidatos:
+            if sn == alias_stem:
+                return _load(p)
+
+    # P1 – exato
+    for sn, p in candidatos:
+        if ln == sn:
+            return _load(p)
+
+    # P2 – linha começa com raiz do stem (CHAPA_GROSSA → CHAPA[S])
+    for sn, p in candidatos:
+        root = sn.rstrip("S")          # remove plural
+        if ln.startswith(root):
+            return _load(p)
+
+    # P3 – stem é prefixo da linha (TUBO → TUBO_METALON)
+    for sn, p in candidatos:
+        if ln.startswith(sn):
+            return _load(p)
+
+    # P4 – stem é prefixo do primeiro token (BOBININHA → BOBINA...)
+    for sn, p in candidatos:
+        if sn.startswith(ln_tok) and len(ln_tok) >= 4:
+            return _load(p)
+
+    # P5 – prefixo comum contíguo ≥ 5 chars (BOBIN em BOBINA/BOBININHA)
+    for sn, p in candidatos:
+        prefix_len = 0
+        for a, b in zip(ln_tok, sn):
+            if a == b:
+                prefix_len += 1
+            else:
+                break
+        if prefix_len >= 5:
+            return _load(p)
+
+    return None
+
+
+def _img_tag(linha: str) -> str:
+    """
+    Retorna HTML de imagem base64 ou placeholder SVG.
+    Imagens são ~225×157px (paisagem, RGBA) — exibidas com:
+      • width: 100%  (preenche a coluna)
+      • max-height: 88px
+      • object-fit: contain  (sem repuxar)
+      • fundo #F5F7FA  (neutro, respeita transparência RGBA)
+    """
+    result = _find_produto_img(linha)
+    if result:
+        raw, mime = result
+        b64 = base64.b64encode(raw).decode()
+        return (
+            f'<div style="width:100%;background:#F5F7FA;border-radius:8px;'
+            f'overflow:hidden;display:flex;align-items:center;'
+            f'justify-content:center;padding:6px 4px;">'
+            f'<img src="data:{mime};base64,{b64}" '
+            f'style="width:100%;max-height:88px;object-fit:contain;display:block;" />'
+            f'</div>'
+        )
+    # Placeholder
+    return (
+        f'<div style="width:100%;height:88px;border-radius:8px;'
+        f'background:linear-gradient(135deg,#EFF3F8 0%,#E2E8F0 100%);'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'flex-direction:column;gap:4px;border:1px solid #E2E8F0;">'
+        f'<span style="font-size:28px;">🏗️</span>'
+        f'<span style="font-size:8px;color:#94A3B8;font-weight:600;text-align:center;'
+        f'padding:0 4px;line-height:1.2;">{linha[:14]}</span>'
+        f'</div>'
+    )
+
+
+def _prev_semana(ano: int, mes: int, sem: int) -> tuple[int, int, int]:
+    """Retorna (ano, mes, semana) da semana imediatamente anterior."""
+    if sem > 1:
+        return ano, mes, sem - 1
+    # Volta ao mês anterior — usa o total de semanas TW daquele mês
+    if mes > 1:
+        p_mes, p_ano = mes - 1, ano
+    else:
+        p_mes, p_ano = 12, ano - 1
+    n_sem_prev = len(get_month_tw_ranges(p_ano, p_mes))
+    return p_ano, p_mes, n_sem_prev
+
+
+def _next_semana(ano: int, mes: int, sem: int) -> tuple[int, int, int]:
+    """Retorna (ano, mes, semana) da semana imediatamente seguinte."""
+    n_sem = len(get_month_tw_ranges(ano, mes))
+    if sem < n_sem:
+        return ano, mes, sem + 1
+    if mes == 12:
+        return ano + 1, 1, 1
+    return ano, mes + 1, 1
+
+
+def _seq_semanas(
+    ano_sel: int, mes_sel: int, sem_sel: int,
+    n_past: int = 5, n_future: int = 10,
+) -> list[tuple[int, int, int]]:
+    """
+    Gera lista ordenada de (ano, mes, semana) com n_past semanas antes
+    da semana selecionada + semana atual + n_future semanas à frente.
+    """
+    past: list[tuple[int, int, int]] = []
+    a, m, s = ano_sel, mes_sel, sem_sel
+    for _ in range(n_past):
+        a, m, s = _prev_semana(a, m, s)
+        past.insert(0, (a, m, s))
+
+    future: list[tuple[int, int, int]] = []
+    a, m, s = ano_sel, mes_sel, sem_sel
+    for _ in range(n_future):
+        a, m, s = _next_semana(a, m, s)
+        future.append((a, m, s))
+
+    return past + [(ano_sel, mes_sel, sem_sel)] + future
+
+
+def _spark_linha_fig(
+    df_all: pd.DataFrame,
+    linha: str,
+    w_sel: dict,
+    n_past: int = 5,
+    n_future: int = 10,
+) -> go.Figure:
+    """
+    Sparkline semanal contínuo para uma linha:
+    - n_past semanas passadas (realizado + metas)
+    - semana atual destacada
+    - n_future semanas futuras (apenas metas, sem realizado)
+    """
+    FONT  = "Inter, Arial, sans-serif"
+    IDX_C = n_past  # índice da semana atual na sequência
+
+    weeks = _seq_semanas(
+        w_sel["ano"], w_sel["mes"], w_sel["semana_mes"],
+        n_past=n_past, n_future=n_future,
+    )
+
+    rows = []
+    for (a, m, s) in weeks:
+        df_w = df_all[
+            (df_all["ano"] == a) & (df_all["mes"] == m) &
+            (df_all["semana_mes"] == s) & (df_all["linha"] == linha)
+        ]
+        rows.append({
+            "ano": a, "mes": m, "sem": s,
+            "vol": float(df_w["vol_ton"].sum()),
+            "soe": float(df_w["meta_soe"].sum()) if "meta_soe" in df_w.columns else 0.0,
+            "sop": float(df_w["meta_sop"].sum()) if "meta_sop" in df_w.columns else 0.0,
+        })
+
+    fig = go.Figure()
+
+    soes_all = [r["soe"] for r in rows]
+    sops_all = [r["sop"] for r in rows]
+    if sum(soes_all) == 0 and sum(sops_all) == 0:
+        fig.update_layout(
+            height=140,
+            margin=dict(t=4, b=4, l=4, r=4),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(visible=False), yaxis=dict(visible=False),
+            annotations=[dict(
+                x=0.5, y=0.5, xref="paper", yref="paper",
+                text="Sem dados para esta linha",
+                showarrow=False,
+                font=dict(size=10, color="#94A3B8", family=FONT),
+            )],
+        )
+        return fig
+
+    x    = list(range(len(rows)))
+    lbls = [
+        f"S{r['sem']}\n{_MESES_ABR.get(r['mes'], '')}{str(r['ano'])[2:]}"
+        for r in rows
+    ]
+
+    # ── Passado + atual: vol realizado (split em dois segments visuais) ────────
+    # Índices passados + atual
+    x_real   = list(range(IDX_C + 1))                # 0..n_past (inclusive)
+    vols_real = [rows[i]["vol"] for i in x_real]
+    cores_pt  = [
+        cor_ritmo(rows[i]["vol"] / rows[i]["soe"] if rows[i]["soe"] > 0 else None)
+        for i in x_real
+    ]
+
+    # Plano SOP — toda a timeline, cinza pontilhado
+    fig.add_trace(go.Scatter(
+        x=x, y=sops_all, name="SOP",
+        mode="lines",
+        line=dict(color="#CBD5E1", width=1.5, dash="dot"),
+        showlegend=True, hoverinfo="skip",
+    ))
+    # Programa SOE — toda a timeline, âmbar tracejado
+    fig.add_trace(go.Scatter(
+        x=x, y=soes_all, name="SOE",
+        mode="lines",
+        line=dict(color="#D97706", width=1.5, dash="dash"),
+        showlegend=True, hoverinfo="skip",
+    ))
+    # Realizado — apenas passado + semana atual, azul + área
+    fig.add_trace(go.Scatter(
+        x=x_real, y=vols_real, name="Real",
+        mode="lines+markers",
+        line=dict(color="#3B82F6", width=2.5, shape="spline", smoothing=0.6),
+        marker=dict(size=7, color=cores_pt, line=dict(color="white", width=1.5)),
+        fill="tozeroy",
+        fillcolor="rgba(59,130,246,0.07)",
+        showlegend=True,
+        hovertemplate="<b>%{text}</b>: %{customdata}<extra></extra>",
+        text=[lbls[i].replace("\n", " ") for i in x_real],
+        customdata=[f"{_fmt_ton(v)} ton" for v in vols_real],
+    ))
+
+    # ── Destaque na semana atual ───────────────────────────────────────────────
+    fig.add_shape(
+        type="rect", xref="x", yref="paper",
+        x0=IDX_C - 0.45, x1=IDX_C + 0.45, y0=0, y1=1,
+        fillcolor="rgba(30,58,95,0.06)",
+        line=dict(color="rgba(30,58,95,0.30)", width=1, dash="dot"),
+        layer="below",
+    )
+    fig.add_annotation(
+        x=IDX_C, y=1.02, xref="x", yref="paper",
+        text="▼ atual", showarrow=False,
+        font=dict(size=8, color="#1E3A5F", family=FONT),
+        yanchor="bottom",
+    )
+
+    all_vals = [r["vol"] for r in rows] + soes_all + sops_all
+    y_max = max((v for v in all_vals if v > 0), default=1) * 1.30
+
+    fig.update_layout(
+        height=150,
+        margin=dict(t=22, b=28, l=6, r=6),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            visible=True, showgrid=False, zeroline=False,
+            tickvals=x, ticktext=lbls,
+            tickfont=dict(size=7, color="#94A3B8", family=FONT),
+            tickangle=0,
+        ),
+        yaxis=dict(visible=False, showgrid=False, range=[0, y_max]),
+        showlegend=True,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.04,
+            xanchor="right", x=1,
+            font=dict(size=7, color="#64748B", family=FONT),
+            bgcolor="rgba(255,255,255,0)",
+        ),
+        hovermode="x",
+        dragmode=False,
+    )
+    return fig
+
+
+def _card_linha_fig(
+    linha: str,
+    df_plot: pd.DataFrame,
+    w_sel: dict,
+    meta_soe: float,
+    meta_sop: float,
+    real_vol: float,
+    cor_fam: str,
+    is_future: bool,
+) -> go.Figure:
+    """
+    Card integrado para uma linha de produto:
+      ┌──────────────────────────────────────────┐
+      │  HEADER COLORIDO                 [imagem] │
+      │  Nome da linha                            │
+      │  SOE: X t  ·  SOP: Y t                   │
+      │  ● 87% atingido                           │
+      ├──────────────────────────────────────────┤
+      │  sparkline: passado→atual→futuro          │
+      └──────────────────────────────────────────┘
+    Tudo num único go.Figure — sem st.container aninhado.
+    """
+    FONT   = "Inter, Arial, sans-serif"
+    HEIGHT = 300
+    T_MAR  = 112    # px do cabeçalho
+    B_MAR  = 28
+    L_MAR  = 10
+    R_MAR  = 10
+    plot_h = HEIGHT - T_MAR - B_MAR              # 160 px (área de gráfico)
+    y_top  = 1.0 + T_MAR / plot_h                # ≈ 1.70 (topo em paper coords)
+
+    def _yh(px: float) -> float:
+        """Pixel a partir do TOPO do header → coordenada paper y (descendo)."""
+        return y_top - px / plot_h
+
+    def _hex_rgba(hx: str, a: float) -> str:
+        h = hx.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"rgba({r},{g},{b},{a})"
+
+    # ── Dados do sparkline ────────────────────────────────────────────────────
+    N_PAST, N_FUT = 5, 10
+    IDX_C = N_PAST
+    weeks = _seq_semanas(
+        w_sel["ano"], w_sel["mes"], w_sel["semana_mes"],
+        n_past=N_PAST, n_future=N_FUT,
+    )
+    rows = []
+    for (a, m, s) in weeks:
+        dw = df_plot[
+            (df_plot["ano"] == a) & (df_plot["mes"] == m) &
+            (df_plot["semana_mes"] == s) & (df_plot["linha"] == linha)
+        ]
+        vol_ = float(dw["vol_ton"].sum())
+        val_ = float(dw["val_mm"].sum()) if "val_mm" in dw.columns else 0.0
+        rows.append({
+            "vol":   vol_,
+            "soe":   float(dw["meta_soe"].sum()) if "meta_soe" in dw.columns else 0.0,
+            "sop":   float(dw["meta_sop"].sum()) if "meta_sop" in dw.columns else 0.0,
+            "preco": (val_ / vol_ * 1_000) if vol_ > 0 and val_ > 0 else None,
+            "mes": m, "sem": s,
+        })
+
+    x        = list(range(len(rows)))
+    x_real   = list(range(IDX_C + 1))
+    lbls     = [f"S{r['sem']}\n{_MESES_ABR.get(r['mes'], '')}" for r in rows]
+    soes_a   = [r["soe"] for r in rows]
+    sops_a   = [r["sop"] for r in rows]
+    vols_r   = [rows[i]["vol"] for i in x_real]
+    cores_pt = [
+        cor_ritmo(rows[i]["vol"] / rows[i]["soe"] if rows[i]["soe"] > 0 else None)
+        for i in x_real
+    ]
+    has_data = sum(soes_a) > 0 or sum(sops_a) > 0
+
+    fig = go.Figure()
+
+    # ── Traces do sparkline ───────────────────────────────────────────────────
+    if has_data:
+        fig.add_trace(go.Scatter(
+            x=x, y=sops_a, name="SOP",
+            mode="lines",
+            line=dict(color="#CBD5E1", width=1.5, dash="dot"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=x, y=soes_a, name="SOE",
+            mode="lines",
+            line=dict(color="#F59E0B", width=1.8, dash="dash"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=x_real, y=vols_r, name="Real",
+            mode="lines+markers",
+            line=dict(color="#3B82F6", width=2.2, shape="spline", smoothing=0.6),
+            marker=dict(size=6, color=cores_pt, line=dict(color="white", width=1.5)),
+            fill="tozeroy",
+            fillcolor="rgba(59,130,246,0.06)",
+            showlegend=False,
+            hovertemplate="%{text}: %{customdata}<extra></extra>",
+            text=[lbls[i].replace("\n", " ") for i in x_real],
+            customdata=[f"{_fmt_ton(v)} ton" for v in vols_r],
+        ))
+
+        # Linha de preço (eixo secundário, sutil)
+        precos_r = [rows[i]["preco"] for i in x_real]
+        if any(p is not None for p in precos_r):
+            fig.add_trace(go.Scatter(
+                x=x_real, y=precos_r, name="Preço",
+                mode="lines",
+                line=dict(color="rgba(251,113,133,0.55)", width=1.2, shape="spline", smoothing=0.5),
+                yaxis="y2",
+                showlegend=False,
+                hovertemplate="%{text}: R$ %{y:,.0f}/t<extra></extra>",
+                text=[lbls[i].replace("\n", " ") for i in x_real],
+                connectgaps=True,
+            ))
+
+        # Destaque semana atual
+        fig.add_shape(
+            type="rect", xref="x", yref="paper",
+            x0=IDX_C - 0.45, x1=IDX_C + 0.45, y0=0, y1=1,
+            fillcolor="rgba(30,58,95,0.05)",
+            line=dict(color="rgba(30,58,95,0.22)", width=1, dash="dot"),
+            layer="below",
+        )
+        fig.add_annotation(
+            x=IDX_C, y=1.02, xref="x", yref="paper",
+            text="▼ atual", showarrow=False,
+            font=dict(size=7, color="#1E3A5F", family=FONT),
+            yanchor="bottom",
+        )
+
+        # Micro-legenda inline (fundo transparente, não cobre nada)
+        fig.add_annotation(
+            x=0.01, y=0.98, xref="paper", yref="paper",
+            text=(
+                '<span style="color:#3B82F6">▬</span> Real'
+                '  <span style="color:#F59E0B">╌</span> SOE'
+                '  <span style="color:#CBD5E1">⋯</span> SOP'
+            ),
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=7, color="#94A3B8", family=FONT),
+        )
+
+    # ── Header: background shape ──────────────────────────────────────────────
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0, x1=1, y0=1.0, y1=y_top,
+        fillcolor=_hex_rgba(cor_fam, 0.32),
+        line_width=0, layer="above",
+    )
+    # Barra superior sólida (4 px de destaque)
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0, x1=1, y0=_yh(5), y1=y_top,
+        fillcolor=_hex_rgba(cor_fam, 0.40),
+        line_width=0, layer="above",
+    )
+
+    # ── Imagem do produto (lado direito do header) ────────────────────────────
+    img_result = _find_produto_img(linha)
+    if img_result:
+        raw, mime = img_result
+        b64 = base64.b64encode(raw).decode()
+        # sizey em coordenadas paper = pixels / plot_h
+        fig.add_layout_image(
+            source=f"data:{mime};base64,{b64}",
+            xref="paper", yref="paper",
+            x=0.97,
+            y=_yh(7),                              # pequena margem do topo
+            xanchor="right",
+            yanchor="top",
+            sizex=0.45,                            # ~45% da largura paper
+            sizey=(T_MAR - 12) / plot_h,           # quase toda a altura do header
+            sizing="contain",
+            layer="above",
+            opacity=0.92,
+        )
+
+    # ── Anotações KPI no header ───────────────────────────────────────────────
+    # Nome da linha (destaque principal)
+    nome_txt = linha if len(linha) <= 18 else linha[:17] + "…"
+    fig.add_annotation(
+        x=0.04, y=_yh(14),
+        xref="paper", yref="paper",
+        text=f"<b>{nome_txt}</b>",
+        showarrow=False, xanchor="left", yanchor="top",
+        font=dict(size=13, color="white", family=FONT),
+    )
+    # Meta SOE
+    fig.add_annotation(
+        x=0.04, y=_yh(38),
+        xref="paper", yref="paper",
+        text=f"SOE  <b>{_fmt_ton(meta_soe)} t</b>",
+        showarrow=False, xanchor="left", yanchor="top",
+        font=dict(size=11, color="rgba(255,255,255,0.90)", family=FONT),
+    )
+    # Meta SOP (se disponível)
+    if meta_sop > 0:
+        fig.add_annotation(
+            x=0.04, y=_yh(57),
+            xref="paper", yref="paper",
+            text=f"SOP  {_fmt_ton(meta_sop)} t",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=10, color="rgba(255,255,255,0.62)", family=FONT),
+        )
+    # Ritmo / status (badge com mini highlight)
+    if not is_future and meta_soe > 0:
+        rit     = real_vol / meta_soe
+        rit_hex = cor_ritmo(rit)
+        rit_txt = f"{rit:.0%}"
+        fig.add_annotation(
+            x=0.04, y=_yh(78),
+            xref="paper", yref="paper",
+            text=f"<b>{rit_txt}</b> atingido",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=11, color=rit_hex, family=FONT),
+            bgcolor="rgba(255,255,255,0.14)",
+            borderpad=4,
+            bordercolor="rgba(255,255,255,0.22)",
+            borderwidth=1,
+        )
+    elif is_future:
+        fig.add_annotation(
+            x=0.04, y=_yh(78),
+            xref="paper", yref="paper",
+            text="📅 Semana futura",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=10, color="rgba(255,255,255,0.55)", family=FONT),
+        )
+    else:
+        fig.add_annotation(
+            x=0.04, y=_yh(78),
+            xref="paper", yref="paper",
+            text="— sem realizado",
+            showarrow=False, xanchor="left", yanchor="top",
+            font=dict(size=10, color="rgba(255,255,255,0.50)", family=FONT),
+        )
+
+    # ── Borda do card ─────────────────────────────────────────────────────────
+    fig.add_shape(
+        type="rect", xref="paper", yref="paper",
+        x0=0, x1=1, y0=0, y1=y_top,
+        fillcolor="rgba(0,0,0,0)",
+        line=dict(color="rgba(170,185,210,0.50)", width=1),
+        layer="above",
+    )
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    all_vals = [r["vol"] for r in rows] + soes_a + sops_a
+    y_max    = max((v for v in all_vals if v > 0), default=100) * 1.30
+
+    fig.update_layout(
+        height=HEIGHT,
+        margin=dict(t=T_MAR, b=B_MAR, l=L_MAR, r=R_MAR),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            visible=has_data,
+            showgrid=False, zeroline=False,
+            tickvals=x       if has_data else [],
+            ticktext=lbls    if has_data else [],
+            tickfont=dict(size=7, color="#94A3B8", family=FONT),
+            tickangle=0,
+        ),
+        yaxis=dict(visible=False, range=[0, y_max]),
+        yaxis2=dict(
+            overlaying="y", side="right",
+            visible=False, showgrid=False, zeroline=False,
+        ),
+        showlegend=False,
+        hovermode="x",
+        dragmode=False,
+        font=dict(family=FONT, size=10, color="#334155"),
+    )
+    return fig
+
+
+def _render_familia_explorer(
+    df_plot: pd.DataFrame,
+    df_v_raw: pd.DataFrame,
+    w_sel: dict,
+    ano_ref: int,
+    mes_ref: int,
+    sem_ref: int,
+) -> None:
+    """
+    Seção interativa: selecione uma família → grid 2 colunas com cartão por linha.
+    Cada cartão mostra: imagem do produto + KPIs da semana + sparkline histórico.
+    """
+    semana_mes_sel = w_sel["semana_mes"]
+
+    # Dados da semana selecionada
+    df_sem = df_plot[
+        (df_plot["ano"] == w_sel["ano"]) &
+        (df_plot["mes"] == w_sel["mes"]) &
+        (df_plot["semana_mes"] == semana_mes_sel)
+    ]
+    meta_por_linha = df_sem.groupby("linha")["meta_soe"].sum()
+    linhas_ativas  = meta_por_linha[meta_por_linha > 0].index.tolist()
+
+    if not linhas_ativas:
+        return
+
+    lf_map = _map_linha_familia(df_v_raw)
+
+    fam_linhas: dict[str, list[str]] = {}
+    for ln in linhas_ativas:
+        fam = lf_map.get(ln, "OUTROS")
+        if fam in ("NAN", "NONE", ""):
+            fam = "OUTROS"
+        fam_linhas.setdefault(fam, []).append(ln)
+
+    if not fam_linhas:
+        return
+
+    st.markdown('<div class="secao-titulo">📦 Explorar por Família</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:11px;color:#94A3B8;margin:-6px 0 12px 0;">'
+        'Selecione uma família para ver o histórico semanal de cada linha '
+        '(Realizado × SOP × SOE) com imagem do produto.</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Botões de família ──────────────────────────────────────────────────
+    _SK = "plano_familia_sel"
+    if _SK not in st.session_state:
+        st.session_state[_SK] = None
+
+    familias_ord = sorted(fam_linhas.keys())
+    n_cols_btn   = min(len(familias_ord) + 1, 7)
+    btn_cols     = st.columns(n_cols_btn)
+
+    with btn_cols[0]:
+        if st.button("✕ Limpar", key="plano_fam_clear", type="secondary",
+                     use_container_width=True):
+            st.session_state[_SK] = None
+            st.rerun()
+
+    for i, fam in enumerate(familias_ord):
+        emoji  = _FAM_EMOJI.get(fam, "📦")
+        n_ln   = len(fam_linhas[fam])
+        col_i  = btn_cols[min(i + 1, n_cols_btn - 1)]
+        is_sel = st.session_state.get(_SK) == fam
+        with col_i:
+            if st.button(
+                f"{emoji} {fam} ({n_ln})",
+                key=f"plano_fam_{fam}",
+                type="primary" if is_sel else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state[_SK] = fam if not is_sel else None
+                st.rerun()
+
+    fam_sel = st.session_state.get(_SK)
+
+    if not fam_sel or fam_sel not in fam_linhas:
+        st.markdown("<br>", unsafe_allow_html=True)
+        return
+
+    # ── Grid de cards ─────────────────────────────────────────────────────
+    cor_fam   = _FAM_COR.get(fam_sel, "#1E3A5F")
+    emoji_fam = _FAM_EMOJI.get(fam_sel, "📦")
+    linhas_s  = sorted(fam_linhas[fam_sel])
+    is_future = _is_future(w_sel, ano_ref, mes_ref, sem_ref)
+
+    st.markdown(
+        f'<div style="font-size:13px;font-weight:700;color:{cor_fam};'
+        f'margin:8px 0 10px 0;">'
+        f'{emoji_fam} {fam_sel} — {len(linhas_s)} '
+        f'linha{"s" if len(linhas_s) != 1 else ""} ativas nesta semana</div>',
+        unsafe_allow_html=True,
+    )
+
+    for idx_l in range(0, len(linhas_s), 2):
+        par           = linhas_s[idx_l: idx_l + 2]
+        col_a, col_b  = st.columns(2, gap="small")
+        card_cols     = [col_a, col_b]
+
+        for j, linha in enumerate(par):
+            df_l      = df_sem[df_sem["linha"] == linha]
+            meta_soe_ = float(df_l["meta_soe"].sum())
+            meta_sop_ = float(df_l["meta_sop"].sum()) if "meta_sop" in df_l.columns else 0.0
+            real_l    = float(df_l["vol_ton"].sum())
+
+            with card_cols[j]:
+                st.plotly_chart(
+                    _card_linha_fig(
+                        linha=linha,
+                        df_plot=df_plot,
+                        w_sel=w_sel,
+                        meta_soe=meta_soe_,
+                        meta_sop=meta_sop_,
+                        real_vol=real_l,
+                        cor_fam=cor_fam,
+                        is_future=is_future,
+                    ),
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                    key=(
+                        f"card_{linha.replace(' ','_').replace('/','_')}"
+                        f"_s{semana_mes_sel}_{idx_l}_{j}"
+                    ),
+                )
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
 
 def _legenda_zonas() -> None:
