@@ -9,6 +9,8 @@ data/processed/
 
 # Credenciais — nunca versionar
 .streamlit/secrets.toml
+credentials_gdrive.json
+token_gdrive.json
 
 # Python
 __pycache__/

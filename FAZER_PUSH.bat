@@ -17,8 +17,6 @@ if not exist "venv\Scripts\python.exe" (
     exit /b 1
 )
 
-set PY=venv\Scripts\python.exe
-
 :: Detecta branch atual
 for /f "tokens=*" %%b in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set BRANCH=%%b
 if "!BRANCH!"=="" (
@@ -41,14 +39,14 @@ if /i not "!CONFIRM!"=="S" (
 )
 
 :: =========================================================
-::  PASSO 1 - Commit e push de CODIGO para GitHub
+::  PASSO 1 - Push de CODIGO para GitHub
 :: =========================================================
 echo.
-echo  [1/3] Enviando codigo para GitHub...
+echo  [1/2] Enviando codigo para GitHub...
 git add -A
 git commit -m "atualizacao %date%"
 if errorlevel 1 (
-    echo  [!] Nada novo para commitar no codigo.
+    echo  [!] Nada novo para commitar.
 )
 git push origin !BRANCH!
 if errorlevel 1 (
@@ -59,41 +57,27 @@ if errorlevel 1 (
 echo  [OK] GitHub atualizado.
 
 :: =========================================================
-::  PASSO 2 - Envia os DADOS para HF via API
-::  Feito ANTES do git push para que o rebuild ja encontre
-::  os parquets prontos quando o Space reiniciar
+::  PASSO 2 - Push de CODIGO para HF Spaces
 :: =========================================================
 echo.
-echo  [2/3] Enviando dados para HF Spaces (API upload)...
-echo         Isso pode demorar alguns minutos...
-echo.
-%PY% scripts\upload_dados_hf.py
-if errorlevel 1 (
-    echo  [ERRO] Falha no upload dos dados para HF.
-    pause
-    exit /b 1
-)
-
-:: =========================================================
-::  PASSO 3 - Push de CODIGO para HF (dispara o rebuild)
-::  Os dados ja estao la -- o rebuild vai encontra-los
-:: =========================================================
-echo.
-echo  [3/3] Enviando codigo para HF Spaces (dispara rebuild)...
+echo  [2/2] Enviando codigo para HF Spaces...
 git push hf !BRANCH!:main --force
 if errorlevel 1 (
-    echo  [ERRO] Falha no push de codigo para HF.
+    echo  [ERRO] Falha no push para HF Spaces.
     pause
     exit /b 1
 )
-echo  [OK] HF Spaces atualizado - rebuild iniciado com dados prontos!
+echo  [OK] HF Spaces atualizado!
 
 echo.
 echo  ========================================================
-echo   Tudo pronto!
-echo   - Codigo atualizado no GitHub
-echo   - Dados enviados ao HF antes do rebuild
-echo   - Rebuild disparado - dashboard atualizado em ~1 min
+echo   Codigo publicado com sucesso!
+echo.
+echo   LEMBRE: para atualizar os DADOS no HF,
+echo   suba os parquets manualmente no Google Drive:
+echo     data\processed\vendas_filtrada.parquet
+echo     data\processed\meta_semanal.parquet
+echo   (use o SUBIR_DADOS_GDRIVE.bat para abrir a pasta)
 echo  ========================================================
 echo.
 pause

@@ -113,18 +113,96 @@ def _peso_global(pesos: dict, semana: int, n_semanas: int) -> float:
 
 def _semanas_futuras(ano: int, mes: int, sem_atual: int, n_sem_mes: int, n: int = N_FUTURO):
     result = []
+    # semanas restantes do mês atual
+    tw = get_month_tw_ranges(ano, mes)
     for s in range(sem_atual + 1, n_sem_mes + 1):
-        tw = get_month_tw_ranges(ano, mes)
         if s <= len(tw):
             _, di, df_ = tw[s-1]
             result.append((ano, mes, s, di, df_))
-    prox_mes = mes + 1 if mes < 12 else 1
-    prox_ano = ano if mes < 12 else ano + 1
-    for sem_m, di, df_ in get_month_tw_ranges(prox_ano, prox_mes):
-        result.append((prox_ano, prox_mes, sem_m, di, df_))
-        if len(result) >= n:
-            break
+    # avança meses sucessivos até completar n semanas
+    a, m = ano, mes
+    while len(result) < n:
+        m += 1
+        if m > 12:
+            m = 1
+            a += 1
+        for sem_m, di, df_ in get_month_tw_ranges(a, m):
+            result.append((a, m, sem_m, di, df_))
+            if len(result) >= n:
+                break
     return result[:n]
+
+
+def _monte_carlo_retroativo(
+    df_f: pd.DataFrame,
+    pesos: dict,
+    n_hist: int = 8,
+    n_sim: int = N_SIM,
+) -> tuple[list, dict, list]:
+    """
+    Roda Monte Carlo retroativamente para as últimas n_hist semanas completas.
+    Para cada semana, usa apenas os dados ANTERIORES a ela como se estivesse
+    prevendo naquele momento — permite comparar faixa prevista vs. realizado.
+    Retorna (semanas, mc_dict, realizados).
+    """
+    agg = (
+        df_f.groupby(['ano', 'mes', 'semana_mes'])['vol_ton']
+        .sum().reset_index()
+    )
+    agg = agg[agg['vol_ton'] > 0].copy()
+    agg['semana_key'] = agg.apply(
+        lambda r: _semana_key(int(r['ano']), int(r['mes']), int(r['semana_mes'])), axis=1
+    )
+    agg = agg.sort_values('semana_key').reset_index(drop=True)
+
+    if len(agg) < N_PACE + 1:
+        return [], {}, []
+
+    # Pega as últimas n_hist semanas com realizado
+    alvos = agg.tail(n_hist).to_dict('records')
+
+    # Pré-calcula semana_key em df_f para filtrar rápido
+    df_f = df_f.copy()
+    df_f['_sk'] = df_f.apply(
+        lambda r: _semana_key(int(r['ano']), int(r['mes']), int(r['semana_mes'])), axis=1
+    )
+
+    p10_l, p25_l, p50_l, p75_l, p90_l = [], [], [], [], []
+    realizados, semanas = [], []
+
+    for row in alvos:
+        ano, mes, sem = int(row['ano']), int(row['mes']), int(row['semana_mes'])
+        key_alvo = int(row['semana_key'])
+
+        # Dados disponíveis antes desta semana
+        df_antes = df_f[df_f['_sk'] < key_alvo]
+        pace_r, std_r = _pace_e_std(df_antes, semana_excl=None, n=N_PACE)
+        if pace_r <= 0:
+            continue
+
+        tw = get_month_tw_ranges(ano, mes)
+        if sem > len(tw):
+            continue
+        _, di, df_ = tw[sem - 1]
+
+        mc_s = _monte_carlo(pace_r, std_r, 0.0, pesos, [(ano, mes, sem, di, df_)], n_sim=n_sim)
+
+        p10_l.append(float(mc_s['p10'][0]))
+        p25_l.append(float(mc_s['p25'][0]))
+        p50_l.append(float(mc_s['p50'][0]))
+        p75_l.append(float(mc_s['p75'][0]))
+        p90_l.append(float(mc_s['p90'][0]))
+        realizados.append(float(row['vol_ton']))
+        semanas.append((ano, mes, sem, di, df_))
+
+    if not semanas:
+        return [], {}, []
+
+    mc_hist = dict(
+        p10=np.array(p10_l), p25=np.array(p25_l), p50=np.array(p50_l),
+        p75=np.array(p75_l), p90=np.array(p90_l),
+    )
+    return semanas, mc_hist, realizados
 
 
 def _monte_carlo(
@@ -839,11 +917,20 @@ def _render_monte_carlo(
     kp: str,
     pace: float,
     badge: str = "Consolidado",
+    semanas_hist: list | None = None,
+    mc_hist: dict | None = None,
+    realizados_hist: list | None = None,
 ) -> None:
     if not semanas or not mc:
         return
 
-    labels   = [_tw_label(a, m, s) for (a, m, s, _, _) in semanas]
+    tem_hist = bool(semanas_hist and mc_hist and realizados_hist)
+
+    # ── Eixo X: histórico (esquerda) + futuro (direita) ──────────────
+    labels_hist = [_tw_label(a, m, s) for (a, m, s, _, _) in semanas_hist] if tem_hist else []
+    labels_fut  = [_tw_label(a, m, s) for (a, m, s, _, _) in semanas]
+    labels_all  = labels_hist + labels_fut
+
     periodos = [f"{di:02d}/{m:02d}–{df_:02d}/{m:02d}" for (a, m, s, di, df_) in semanas]
 
     p10 = mc['p10']; p25 = mc['p25']
@@ -851,9 +938,104 @@ def _render_monte_carlo(
 
     fig = go.Figure()
 
-    # ── Banda P10–P90 (pior–melhor cenário) ─────────────────────────
+    # ── SEÇÃO HISTÓRICA ──────────────────────────────────────────────
+    if tem_hist:
+        h10 = mc_hist['p10']; h25 = mc_hist['p25']
+        h50 = mc_hist['p50']; h75 = mc_hist['p75']; h90 = mc_hist['p90']
+
+        # Banda P10–P90 histórica
+        fig.add_trace(go.Scatter(
+            x=labels_hist + labels_hist[::-1],
+            y=list(h90) + list(h10[::-1]),
+            fill="toself",
+            fillcolor="rgba(107,114,128,0.08)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="Faixa P10–P90 histórica",
+            legendgroup="hist",
+            hoverinfo="skip",
+        ))
+
+        # Banda P25–P75 histórica
+        fig.add_trace(go.Scatter(
+            x=labels_hist + labels_hist[::-1],
+            y=list(h75) + list(h25[::-1]),
+            fill="toself",
+            fillcolor="rgba(107,114,128,0.18)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="Faixa P25–P75 histórica",
+            legendgroup="hist",
+            hoverinfo="skip",
+        ))
+
+        # P90 histórico (linha pontilhada cinza)
+        fig.add_trace(go.Scatter(
+            x=labels_hist, y=list(h90),
+            mode="lines",
+            line=dict(color="rgba(107,114,128,0.5)", width=1.2, dash="dot"),
+            name="P90 histórico",
+            legendgroup="hist",
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+        # P10 histórico (linha pontilhada cinza)
+        fig.add_trace(go.Scatter(
+            x=labels_hist, y=list(h10),
+            mode="lines",
+            line=dict(color="rgba(107,114,128,0.5)", width=1.2, dash="dot"),
+            name="P10 histórico",
+            legendgroup="hist",
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+        # Realizado histórico — linha sólida destacada
+        periodos_hist = [f"{di:02d}/{m:02d}–{df_:02d}/{m:02d}" for (a, m, s, di, df_) in semanas_hist]
+        dentro_faixa  = [h10[i] <= realizados_hist[i] <= h90[i] for i in range(len(realizados_hist))]
+        cores_pts     = [COR_VERDE if d else COR_VERMELHO for d in dentro_faixa]
+
+        fig.add_trace(go.Scatter(
+            x=labels_hist,
+            y=realizados_hist,
+            mode="lines+markers",
+            line=dict(color=COR_PRIMARIA, width=3),
+            marker=dict(
+                size=10, color=cores_pts,
+                line=dict(color="white", width=2),
+            ),
+            name="Realizado (histórico)",
+            legendgroup="hist",
+            hovertemplate=(
+                "<b>%{x}</b> (%{customdata})<br>"
+                "📦 Realizado: <b>%{y:,.0f} ton</b><br>"
+                "<extra></extra>"
+            ),
+            customdata=periodos_hist,
+        ))
+
+        # Linha vertical separando histórico do futuro
+        if labels_hist and labels_fut:
+            fig.add_shape(
+                type="line",
+                xref="x", yref="paper",
+                x0=labels_hist[-1], x1=labels_hist[-1],
+                y0=0, y1=1,
+                line=dict(color="rgba(100,100,100,0.35)", width=1.5, dash="dash"),
+            )
+            fig.add_annotation(
+                x=labels_hist[-1], xref="x",
+                y=1.0, yref="paper",
+                text="hoje →",
+                showarrow=False,
+                xanchor="left", yanchor="top",
+                font=dict(size=9, color="#888"),
+                xshift=4,
+            )
+
+    # ── SEÇÃO FUTURA ─────────────────────────────────────────────────
+    # Banda P10–P90 (pior–melhor cenário)
     fig.add_trace(go.Scatter(
-        x=labels + labels[::-1],
+        x=labels_fut + labels_fut[::-1],
         y=list(p90) + list(p10[::-1]),
         fill="toself",
         fillcolor="rgba(59,130,246,0.08)",
@@ -862,9 +1044,9 @@ def _render_monte_carlo(
         hoverinfo="skip",
     ))
 
-    # ── Banda P25–P75 (cenário mais provável) ────────────────────────
+    # Banda P25–P75 (cenário mais provável)
     fig.add_trace(go.Scatter(
-        x=labels + labels[::-1],
+        x=labels_fut + labels_fut[::-1],
         y=list(p75) + list(p25[::-1]),
         fill="toself",
         fillcolor="rgba(59,130,246,0.18)",
@@ -875,7 +1057,7 @@ def _render_monte_carlo(
 
     # ── P90 — melhor cenário ────────────────────────────────────────
     fig.add_trace(go.Scatter(
-        x=labels, y=p90,
+        x=labels_fut, y=p90,
         mode="lines+markers",
         line=dict(color=COR_VERDE, width=1.8, dash="dot"),
         marker=dict(size=6, color=COR_VERDE, symbol="triangle-up",
@@ -891,7 +1073,7 @@ def _render_monte_carlo(
 
     # ── P10 — pior cenário ──────────────────────────────────────────
     fig.add_trace(go.Scatter(
-        x=labels, y=p10,
+        x=labels_fut, y=p10,
         mode="lines+markers",
         line=dict(color=COR_VERMELHO, width=1.8, dash="dot"),
         marker=dict(size=6, color=COR_VERMELHO, symbol="triangle-down",
@@ -907,7 +1089,7 @@ def _render_monte_carlo(
 
     # ── P50 — forecast central ──────────────────────────────────────
     fig.add_trace(go.Scatter(
-        x=labels, y=p50,
+        x=labels_fut, y=p50,
         mode="lines+markers",
         line=dict(color=COR_ACENTO, width=3.5),
         marker=dict(size=10, color=COR_ACENTO, symbol="circle",
@@ -927,7 +1109,7 @@ def _render_monte_carlo(
         sop_vals = [_meta_semana(df_f,'meta_sop',a,m,s) for (a,m,s,_,_) in semanas]
         sop_mask = [v > 0 for v in sop_vals]
         if any(sop_mask):
-            x_sop = [labels[i] for i,v in enumerate(sop_mask) if v]
+            x_sop = [labels_fut[i] for i,v in enumerate(sop_mask) if v]
             y_sop = [sop_vals[i] for i,v in enumerate(sop_mask) if v]
             fig.add_trace(go.Scatter(
                 x=x_sop, y=y_sop,
@@ -948,7 +1130,7 @@ def _render_monte_carlo(
         soe_vals = [_meta_semana(df_f,'meta_soe',a,m,s) for (a,m,s,_,_) in semanas]
         soe_mask = [v > 0 for v in soe_vals]
         if any(soe_mask):
-            x_soe = [labels[i] for i,v in enumerate(soe_mask) if v]
+            x_soe = [labels_fut[i] for i,v in enumerate(soe_mask) if v]
             y_soe = [soe_vals[i] for i,v in enumerate(soe_mask) if v]
             fig.add_trace(go.Scatter(
                 x=x_soe, y=y_soe,
@@ -965,7 +1147,7 @@ def _render_monte_carlo(
             ))
 
     # ── Anotações na última semana (labels flutuantes) ────────────────
-    last_label = labels[-1]
+    last_label = labels_fut[-1]
     fig.add_annotation(
         x=last_label, y=float(p90[-1]),
         text="Otimista<br>(P90)",
@@ -991,21 +1173,30 @@ def _render_monte_carlo(
         xshift=8,
     )
 
+    has_hist = semanas_hist and mc_hist and realizados_hist
+    title_hist = (
+        " · faixa cinza = retroativo (12 sem.) · linha colorida = realizado"
+        if has_hist else ""
+    )
     fig.update_layout(
-        height=480,
+        height=520,
         title=dict(
             text=(
-                f"<b>Projeção Monte Carlo — Próximas Semanas</b><br>"
+                f"<b>Monte Carlo — Histórico Retroativo + Projeção</b><br>"
                 "<span style='font-size:11px;font-weight:normal;color:#888'>"
-                "1.000 simulações · faixa laranja escura = 50% mais prováveis · "
-                "faixa clara = 80% de confiança</span>"
+                "1.000 simulações · faixa laranja = futuro"
+                f"{title_hist}</span>"
             ),
             font=dict(size=14, color=COR_PRIMARIA, family="Arial"), x=0,
             pad=dict(b=8),
         ),
         margin=dict(t=72, b=110, l=75, r=110),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(tickfont=dict(size=11), gridcolor=COR_GRID, tickangle=-20),
+        xaxis=dict(
+            tickfont=dict(size=11), gridcolor=COR_GRID, tickangle=-20,
+            categoryorder="array",
+            categoryarray=labels_all if has_hist else labels_fut,
+        ),
         yaxis=dict(
             title="Volume (ton)", gridcolor=COR_GRID,
             tickformat=",", tickfont=dict(size=11),
@@ -1211,6 +1402,11 @@ def render(
     # ── Monte Carlo ────────────────────────────────────────────────
     mc = _monte_carlo(pace, std, bias_frac, pesos, semanas, n_sim=N_SIM)
 
+    # ── Monte Carlo retroativo (últimas 8 semanas históricas) ──────
+    semanas_hist, mc_hist, realizados_hist = _monte_carlo_retroativo(
+        df_f, pesos, n_hist=12, n_sim=N_SIM
+    )
+
     # ── Introdução didática ────────────────────────────────────────
     _render_mc_intro(metricas, pace, std, bias_frac)
 
@@ -1218,7 +1414,12 @@ def render(
     _render_mc_scenarios(semanas, mc)
 
     # ── Gráfico Monte Carlo (largura total) ────────────────────────
-    _render_monte_carlo(semanas, mc, df_f, kp, pace)
+    _render_monte_carlo(
+        semanas, mc, df_f, kp, pace,
+        semanas_hist=semanas_hist if semanas_hist else None,
+        mc_hist=mc_hist if mc_hist else None,
+        realizados_hist=realizados_hist if realizados_hist else None,
+    )
 
     # ── Guia de leitura do gráfico ────────────────────────────────
     _render_mc_reading_guide()
