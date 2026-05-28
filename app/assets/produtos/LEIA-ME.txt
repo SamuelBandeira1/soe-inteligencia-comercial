@@ -1,0 +1,22 @@
+IMAGENS DOS PRODUTOS — Explorador de Família
+============================================
+
+Coloque aqui imagens PNG ou JPG de cada linha de produto.
+A nomenclatura deve seguir o nome da linha em MAIÚSCULAS com espaços
+substituídos por underscore (_).
+
+Exemplos:
+  VERGALHAO.png
+  TELA.png
+  TELA_COLUNA.png
+  PERFIS.png
+  BOBINA_SLITTER.png
+  CHAPA_GROSSA.png
+  FM.png
+  TUBO_METALON.png
+  CANTONEIRA.png
+  INOX_BOBINA.png
+
+Formatos aceitos: .png  .jpg  .jpeg  .webp
+Tamanho ideal: 200x200 px (quadrado), fundo branco ou transparente.
+Se a imagem não existir, aparece um ícone padrão 🏗️ como placeholder.
