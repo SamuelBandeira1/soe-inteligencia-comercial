@@ -25,15 +25,38 @@ export default function HeroSection() {
       id="inicio"
       style={{ position: "relative", width: "100%", height: "100svh", overflow: "hidden" }}
     >
-      {/* Background image */}
-      <Image
-        src={IMAGES.hero}
-        alt="Madeiras Comaf"
-        fill
-        priority
-        sizes="100vw"
-        style={{ objectFit: "cover", objectPosition: "center" }}
-      />
+      {/* Ambient YouTube video background — royalty-free woodworking footage */}
+      <div style={{
+        position: "absolute", inset: 0, zIndex: 0, overflow: "hidden",
+        background: "#0F0B07",
+      }}>
+        <iframe
+          src="https://www.youtube.com/embed/uHw1yR_pyZA?autoplay=1&mute=1&loop=1&playlist=uHw1yR_pyZA&controls=0&disablekb=1&fs=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3"
+          allow="autoplay; encrypted-media"
+          style={{
+            position: "absolute",
+            /* keep 16:9 ratio filling the viewport */
+            width: "177.78vh",
+            minWidth: "100%",
+            height: "100vh",
+            minHeight: "56.25vw",
+            top: "50%", left: "50%",
+            transform: "translate(-50%, -50%)",
+            border: "none",
+            pointerEvents: "none",
+          }}
+          title="Comaf background"
+        />
+        {/* Fallback static image shown while iframe loads */}
+        <Image
+          src={IMAGES.hero}
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          style={{ objectFit: "cover", objectPosition: "center", zIndex: -1 }}
+        />
+      </div>
 
       {/* Dark overlays */}
       <div style={{
