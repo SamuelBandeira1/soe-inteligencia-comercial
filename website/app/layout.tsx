@@ -5,35 +5,34 @@ import ClientLayout from "@/components/ClientLayout";
 
 const syne = Syne({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["400", "600", "700", "800"],
   variable: "--font-syne",
   display: "swap",
 });
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["300", "400", "500", "600"],
   variable: "--font-space-grotesk",
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "SOE | Estruturas de Aço de Alta Performance",
+  title: "Comaf Portas | Madeireira em Fortaleza - CE",
   description:
-    "Engenharia siderúrgica de precisão. Estruturas metálicas que constroem o futuro com força, tecnologia e sustentabilidade.",
-  keywords: ["aço", "estruturas metálicas", "siderurgia", "engenharia estrutural", "steel"],
+    "Há 20 anos especialistas em portas de madeira, virgas, tábuas, ripas e madeiras para construção em Fortaleza. Qualidade, variedade e atendimento exclusivo.",
+  keywords: ["madeireira", "portas de madeira", "Fortaleza", "virgas", "tábuas", "Comaf"],
+  openGraph: {
+    title: "Comaf Portas | Madeireira em Fortaleza",
+    description: "Especialistas em madeiras e portas há 20 anos em Fortaleza - CE.",
+    locale: "pt_BR",
+    type: "website",
+  },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="pt-BR"
-      className={`${syne.variable} ${spaceGrotesk.variable}`}
-    >
+    <html lang="pt-BR" className={`${syne.variable} ${spaceGrotesk.variable}`}>
       <body>
         <ClientLayout>{children}</ClientLayout>
       </body>

@@ -1,27 +1,29 @@
 @import "tailwindcss";
 
-/* ─── Design System Tokens ─── */
+/* ─── Comaf Design System ─── */
 @theme {
-  /* Core palette */
-  --color-void:        #0B0C10;
-  --color-surface:     #1F2833;
-  --color-surface-2:   #0D1117;
-  --color-surface-3:   #13151A;
+  /* Wood palette */
+  --color-espresso:   #0F0B07;
+  --color-mahogany:   #1A1208;
+  --color-walnut:     #251A0E;
+  --color-bark:       #3D2B14;
 
-  /* Brand accents */
-  --color-ember:       #FF4500;
-  --color-ember-dim:   #B33000;
-  --color-plasma:      #00D2FF;
-  --color-plasma-dim:  #0099CC;
-  --color-titanium:    #66FCF1;
+  /* Amber / Oak accents */
+  --color-amber:      #C8A87A;
+  --color-amber-light:#E8C49A;
+  --color-amber-dim:  #8B6940;
 
-  /* Neutrals */
-  --color-steel:       #C5C6C7;
-  --color-muted:       #45A29E;
+  /* Text */
+  --color-cream:      #F5EFE6;
+  --color-muted-wood: #8B7355;
+
+  /* Accent green */
+  --color-forest:     #2D5016;
+  --color-forest-light:#4A7A24;
 
   /* Typography */
-  --font-display:      var(--font-syne);
-  --font-body:         var(--font-space-grotesk);
+  --font-display: var(--font-syne);
+  --font-body:    var(--font-space-grotesk);
 }
 
 /* ─── Reset ─── */
@@ -32,55 +34,44 @@
 }
 
 html {
-  background-color: #0B0C10;
-  color: #C5C6C7;
+  background-color: #0F0B07;
+  color: #F5EFE6;
   overflow-x: hidden;
   scroll-behavior: smooth;
 }
 
 body {
   font-family: var(--font-space-grotesk), system-ui, sans-serif;
-  background-color: #0B0C10;
-  color: #C5C6C7;
+  background-color: #0F0B07;
+  color: #F5EFE6;
   overflow-x: hidden;
   cursor: none;
 }
 
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar        { width: 3px; }
-::-webkit-scrollbar-track  { background: #0B0C10; }
-::-webkit-scrollbar-thumb  { background: #FF4500; border-radius: 2px; }
+::-webkit-scrollbar-track  { background: #0F0B07; }
+::-webkit-scrollbar-thumb  { background: #C8A87A; border-radius: 2px; }
 
 /* ─── Selection ─── */
 ::selection {
-  background: rgba(0, 210, 255, 0.18);
-  color: #00D2FF;
+  background: rgba(200, 168, 122, 0.2);
+  color: #C8A87A;
 }
 
-/* ─── Hero utility classes ─── */
-.hero-grid {
+/* ─── Utility ─── */
+.wood-grain {
   background-image:
-    linear-gradient(rgba(0, 210, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 210, 255, 0.025) 1px, transparent 1px);
-  background-size: 72px 72px;
+    repeating-linear-gradient(
+      92deg,
+      transparent,
+      transparent 2px,
+      rgba(200, 168, 122, 0.015) 2px,
+      rgba(200, 168, 122, 0.015) 4px
+    );
 }
 
-.scanlines::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 3px,
-    rgba(0, 0, 0, 0.06) 3px,
-    rgba(0, 0, 0, 0.06) 4px
-  );
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* ─── GSAP perspective helper ─── */
-.perspective-1200 {
-  perspective: 1200px;
+.section-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(200,168,122,0.25), transparent);
 }
