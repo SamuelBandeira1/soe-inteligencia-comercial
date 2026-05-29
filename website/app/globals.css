@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+/* ─── Design System Tokens ─── */
+@theme {
+  /* Core palette */
+  --color-void:        #0B0C10;
+  --color-surface:     #1F2833;
+  --color-surface-2:   #0D1117;
+  --color-surface-3:   #13151A;
+
+  /* Brand accents */
+  --color-ember:       #FF4500;
+  --color-ember-dim:   #B33000;
+  --color-plasma:      #00D2FF;
+  --color-plasma-dim:  #0099CC;
+  --color-titanium:    #66FCF1;
+
+  /* Neutrals */
+  --color-steel:       #C5C6C7;
+  --color-muted:       #45A29E;
+
+  /* Typography */
+  --font-display:      var(--font-syne);
+  --font-body:         var(--font-space-grotesk);
+}
+
+/* ─── Reset ─── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background-color: #0B0C10;
+  color: #C5C6C7;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-space-grotesk), system-ui, sans-serif;
+  background-color: #0B0C10;
+  color: #C5C6C7;
+  overflow-x: hidden;
+  cursor: none;
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar        { width: 3px; }
+::-webkit-scrollbar-track  { background: #0B0C10; }
+::-webkit-scrollbar-thumb  { background: #FF4500; border-radius: 2px; }
+
+/* ─── Selection ─── */
+::selection {
+  background: rgba(0, 210, 255, 0.18);
+  color: #00D2FF;
+}
+
+/* ─── Hero utility classes ─── */
+.hero-grid {
+  background-image:
+    linear-gradient(rgba(0, 210, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 210, 255, 0.025) 1px, transparent 1px);
+  background-size: 72px 72px;
+}
+
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.06) 3px,
+    rgba(0, 0, 0, 0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ─── GSAP perspective helper ─── */
+.perspective-1200 {
+  perspective: 1200px;
+}
