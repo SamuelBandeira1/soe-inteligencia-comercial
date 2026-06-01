@@ -25,6 +25,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import GERENCIA_CONFIG, GERENCIA_DESCONHECIDA
+from utils.metrics import assertividade as _assertividade, bias as _bias
 from utils.visual import (
     COR_PRIMARIA, COR_ACENTO, COR_VERDE, COR_AMARELO, COR_VERMELHO,
     fmt_ton as _fmt_ton,
@@ -37,9 +38,12 @@ N_HIST   = 12
 N_FUTURO = 8
 N_CALIB  = 4
 
-_TH_WMAPE = (10.0, 20.0)
 _TH_BIAS  = (5.0,  12.0)
 _TH_ADER  = (85.0, 70.0)
+
+# Menor nível de planejamento — erros absolutos DEVEM ser calculados aqui
+# antes de qualquer agregação, para evitar cancelamento de desvios opostos.
+_GRP_PLANO = ["ano", "mes", "semana_mes", "linha", "gerencia"]
 
 _MESES_ABR = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
@@ -52,16 +56,15 @@ _MESES_FULL = {
 }
 
 _GLOSSARIO: dict[str, str] = {
-    "WMAPE": (
-        "Weighted Mean Absolute Percentage Error — erro percentual médio "
-        "ponderado pelo volume. Verde ≤10% · Amarelo 10–20% · Vermelho >20%."
+    "Assertividade": (
+        "Mede o quanto o plano se aproximou do realizado. "
+        "Fórmula: 1 − MAPE, onde MAPE = Σ|Real−Plano| / Σbase. "
+        "Verde ≥85% · Amarelo ≥70% · Vermelho <70%. "
+        "Calculado no nível semana × linha × gerência para evitar cancelamento de erros opostos."
     ),
     "Bias": (
         "Viés sistemático — se o plano tende a superestimar (+) "
         "ou subestimar (−) o realizado. Verde |bias| ≤5%."
-    ),
-    "Aderência": (
-        "% de semanas em que o erro ficou dentro de ±10% do plano. Meta: ≥85%."
     ),
     "GAP": (
         "Diferença Real − Plano em toneladas. "
@@ -113,52 +116,35 @@ def _add_gerencia(df: pd.DataFrame) -> pd.DataFrame:
 # MÉTRICAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _wmape(real: pd.Series, plano: pd.Series) -> float:
-    d = real.sum()
-    return float((real - plano).abs().sum() / d * 100) if d > 0 else float("nan")
+# Bias e Assertividade migrados para utils.metrics (HC-02 — fórmula única).
+# HC-02/HC-T4: NAO unificar — objetos estatisticos distintos. Ver parecer 2026-05-30.
 
 
-def _bias(real: pd.Series, plano: pd.Series) -> float:
-    d = real.sum()
-    return float((plano - real).sum() / d * 100) if d > 0 else float("nan")
-
-
-def _assertividade(
-    real: pd.Series,
-    plano: pd.Series,
-    base: str = "real",
-) -> float:
+def _agrupar_nivel_plano(df: pd.DataFrame, *cols: str) -> pd.DataFrame:
     """
-    Assertividade = 1 − MAPE, onde MAPE é calculado sobre a série acumulada.
+    Agrega ao menor nível de planejamento: semana × linha × gerencia.
 
-    base="real"  → MAPE = Σ|Real−Plano| / ΣReal   (Forecast Accuracy clássico)
-    base="plano" → MAPE = Σ|Real−Plano| / ΣPlano  (perspectiva do planejador)
-
-    Retorna valor em % (0–100), limitado inferiormente a 0.
-    Retorna nan quando a base é zero (evita divisão por zero).
+    |erro| DEVE ser calculado neste nível antes de qualquer soma.
+    Se linha A está +100 t e linha B está −100 t na mesma semana,
+    agregar primeiro zeraria o erro; calcular aqui soma 200 t de erro — correto.
     """
-    base_vals = real if base == "real" else plano
-    d = base_vals.sum()
-    if d == 0:
-        return float("nan")
-    mape = float((real - plano).abs().sum() / d)
-    return float(max(0.0, (1.0 - mape) * 100))
-
-
-def _assertividade_semana(
-    real: float,
-    plano: float,
-    base: str = "real",
-) -> float:
-    """Assertividade de uma única semana (escalares)."""
-    b = real if base == "real" else plano
-    if b == 0:
-        return float("nan")
-    return float(max(0.0, (1.0 - abs(real - plano) / b) * 100))
+    grp = [c for c in _GRP_PLANO if c in df.columns]
+    if not grp:
+        raise ValueError(
+            f"_agrupar_nivel_plano: nenhuma coluna de agrupamento encontrada. "
+            f"Esperado pelo menos uma de {_GRP_PLANO}. Colunas disponíveis: {list(df.columns)}"
+        )
+    agg: dict[str, str] = {"vol_ton": "sum"}
+    for c in cols:
+        if c in df.columns:
+            agg[c] = "sum"
+    return df.groupby(grp, as_index=False).agg(agg)
 
 
 def _calc(df: pd.DataFrame, col: str, base: str = "real") -> dict:
-    r, p = df["vol_ton"], df[col]
+    """Métricas agregadas sobre o nível correto de planejamento."""
+    df_g = _agrupar_nivel_plano(df, col)
+    r, p = df_g["vol_ton"], df_g[col]
     return {
         "assertividade": _assertividade(r, p, base),
         "bias":          _bias(r, p),
@@ -422,7 +408,7 @@ def _fig_horizonte(
     if n_hist < len(labels):
         # Add uma shape cobrindo a zona futura
         fig.add_vrect(
-            x0=labels[n_hist] if n_hist < len(labels) else labels[-1],
+            x0=labels[n_hist - 1] if n_hist < len(labels) else labels[-1],
             x1=labels[-1],
             fillcolor="rgba(241,245,249,0.6)",
             line_width=0,
@@ -442,7 +428,7 @@ def _fig_horizonte(
     ))
 
     # ── S&OP histórico + futuro ───────────────────────────────────────────────
-    if sop_vals:
+    if sop_vals and any(v is not None for v in sop_vals):
         fig.add_trace(go.Scatter(
             x=labels[:n_hist],
             y=sop_vals[:n_hist],
@@ -483,8 +469,8 @@ def _fig_horizonte(
             y=soe_vals[n_hist:],
             mode="lines+markers",
             name="S&OE (proj.)",
-            line=dict(color="#FCD34D", width=1.5, dash="dash"),
-            marker=dict(size=5, color="#FCD34D"),
+            line=dict(color=COR_ACENTO, width=1.5, dash="dash"),
+            marker=dict(size=5, color=COR_ACENTO),
             connectgaps=False,
             showlegend=False,
             hovertemplate="<b>%{x}</b><br>S&OE proj.: <b>%{y:,.0f} t</b><extra></extra>",
@@ -509,7 +495,7 @@ def _fig_horizonte(
 
     fig.update_layout(
         height=340,
-        margin=dict(t=40, b=60, l=60, r=20),
+        margin=dict(t=56, b=60, l=60, r=20),
         paper_bgcolor=_BG,
         plot_bgcolor="#FFFFFF",
         font=dict(family=_FONT, size=11),
@@ -527,6 +513,7 @@ def _fig_horizonte(
             gridcolor="#F1F5F9",
             tickfont=dict(size=10, color="#94A3B8"),
             zeroline=False,
+            rangemode="tozero",
         ),
         legend=dict(
             orientation="h",
@@ -599,13 +586,14 @@ def _render_tabela_agregada(
         weeks = meses_semanas[(a, m)]
         ml = mes_lbl_map[(a, m)]
 
-        # Acumuladores mensais
+        # Acumuladores mensais (totais para exibição)
         real_m = 0.0
         sop_m  = 0.0
         soe_m  = 0.0
-        real_buf: list[float] = []
-        sop_buf: list[float]  = []
-        soe_buf: list[float]  = []
+        # Acumuladores granulares para cálculo correto de assertividade
+        # Nível: semana × linha × gerencia — sem agregação prévia
+        grp_sop: list[pd.DataFrame] = []
+        grp_soe: list[pd.DataFrame] = []
 
         for w in weeks:
             sl = f"S{w['semana_mes']}" + ("*" if w["is_future"] else "")
@@ -618,7 +606,6 @@ def _render_tabela_agregada(
             ]
 
             if w["is_future"]:
-                real_w = None
                 sop_w  = float(sub["meta_sop"].sum()) if (tem_sop and not sub.empty and "meta_sop" in sub.columns) else None
                 soe_w  = float(sub["meta_soe"].sum()) if (tem_soe and not sub.empty and "meta_soe" in sub.columns) else None
 
@@ -636,14 +623,28 @@ def _render_tabela_agregada(
                 if soe_w: soe_m += soe_w
 
             else:
+                # Totais semanais (apenas para exibição de volume e GAP)
                 real_w = float(sub["vol_ton"].sum()) if not sub.empty else 0.0
                 sop_w  = float(sub["meta_sop"].sum()) if (tem_sop and not sub.empty and "meta_sop" in sub.columns) else 0.0
                 soe_w  = float(sub["meta_soe"].sum()) if (tem_soe and not sub.empty and "meta_soe" in sub.columns) else 0.0
 
-                gap_sop_w   = real_w - sop_w  if tem_sop else None
-                gap_soe_w   = real_w - soe_w  if tem_soe else None
-                assert_sop_w = _assertividade_semana(real_w, sop_w, base_calc) if tem_sop else float("nan")
-                assert_soe_w = _assertividade_semana(real_w, soe_w, base_calc) if tem_soe else float("nan")
+                gap_sop_w = real_w - sop_w if tem_sop else None
+                gap_soe_w = real_w - soe_w if tem_soe else None
+
+                # Assertividade por semana: erros calculados no nível linha × gerencia
+                if tem_sop and not sub.empty:
+                    sg = _agrupar_nivel_plano(sub, "meta_sop")
+                    assert_sop_w = _assertividade(sg["vol_ton"], sg["meta_sop"], base_calc)
+                    grp_sop.append(sg)
+                else:
+                    assert_sop_w = float("nan")
+
+                if tem_soe and not sub.empty:
+                    sg = _agrupar_nivel_plano(sub, "meta_soe")
+                    assert_soe_w = _assertividade(sg["vol_ton"], sg["meta_soe"], base_calc)
+                    grp_soe.append(sg)
+                else:
+                    assert_soe_w = float("nan")
 
                 data_cells["Real (t)"][ck] = f"{int(round(real_w)):,}" if real_w else "—"
                 if tem_sop:
@@ -658,15 +659,19 @@ def _render_tabela_agregada(
                 real_m += real_w
                 sop_m  += sop_w
                 soe_m  += soe_w
-                real_buf.append(real_w)
-                sop_buf.append(sop_w)
-                soe_buf.append(soe_w)
 
-        # Coluna Σ
+        # Coluna Σ — assertividade acumulada no nível granular (soma dos erros absolutos / soma da base)
         sk = (ml, "Σ")
-        r_s = pd.Series(real_buf)
-        assert_sop_m = _assertividade(r_s, pd.Series(sop_buf), base_calc) if (tem_sop and real_buf) else float("nan")
-        assert_soe_m = _assertividade(r_s, pd.Series(soe_buf), base_calc) if (tem_soe and real_buf) else float("nan")
+        if grp_sop:
+            all_sop = pd.concat(grp_sop, ignore_index=True)
+            assert_sop_m = _assertividade(all_sop["vol_ton"], all_sop["meta_sop"], base_calc)
+        else:
+            assert_sop_m = float("nan")
+        if grp_soe:
+            all_soe = pd.concat(grp_soe, ignore_index=True)
+            assert_soe_m = _assertividade(all_soe["vol_ton"], all_soe["meta_soe"], base_calc)
+        else:
+            assert_soe_m = float("nan")
 
         data_cells["Real (t)"][sk] = f"{int(round(real_m)):,}" if real_m else "—"
         if tem_sop:
@@ -796,8 +801,8 @@ def _render_detalhe_linha(
             ws  = meses_semanas[(a, m)]
             ml  = mes_lbl_map[(a, m)]
             real_m, plano_m = 0.0, 0.0
-            r_buf: list[float] = []
-            p_buf: list[float] = []
+            # Acumulador granular (semana × gerencia) para assertividade correta
+            grp_buf: list[pd.DataFrame] = []
 
             for w in ws:
                 sl = f"S{w['semana_mes']}" + ("*" if w["is_future"] else "")
@@ -814,23 +819,31 @@ def _render_detalhe_linha(
                     cells[(lin, "GAP (t)")][ck]   = f"~{int(round(gap_proj)):+,}" if plan else "—"
                     cells[(lin, "Assert%")][ck]   = "—"
                     plano_m += plan
-                    p_buf.append(plan)
                 else:
+                    # Totais semanais (para exibição de volume e GAP)
                     real  = float(sub["vol_ton"].sum()) if not sub.empty else 0.0
                     plan  = float(sub[col_plano].sum()) if (not sub.empty and col_plano in sub.columns) else 0.0
                     gap   = real - plan
-                    assrt = _assertividade_semana(real, plan, base_calc)
+                    # Assertividade: erros no nível semana × gerencia (dentro da linha)
+                    if not sub.empty:
+                        sg = _agrupar_nivel_plano(sub, col_plano)
+                        assrt = _assertividade(sg["vol_ton"], sg[col_plano], base_calc)
+                        grp_buf.append(sg)
+                    else:
+                        assrt = float("nan")
                     cells[(lin, "Real (t)")][ck]  = f"{int(round(real)):,}" if real else "—"
                     cells[(lin, "Plano (t)")][ck] = f"{int(round(plan)):,}" if plan else "—"
                     cells[(lin, "GAP (t)")][ck]   = f"{int(round(gap)):+,}" if (real or plan) else "—"
                     cells[(lin, "Assert%")][ck]   = f"{assrt:.1f}%" if not np.isnan(assrt) else "—"
                     real_m  += real
                     plano_m += plan
-                    r_buf.append(real)
-                    p_buf.append(plan)
 
             sk = (ml, "Σ")
-            assrt_m = _assertividade(pd.Series(r_buf), pd.Series(p_buf), base_calc) if r_buf else float("nan")
+            if grp_buf:
+                all_g = pd.concat(grp_buf, ignore_index=True)
+                assrt_m = _assertividade(all_g["vol_ton"], all_g[col_plano], base_calc)
+            else:
+                assrt_m = float("nan")
             cells[(lin, "Real (t)")][sk]  = f"{int(round(real_m)):,}" if real_m else "—"
             cells[(lin, "Plano (t)")][sk] = f"{int(round(plano_m)):,}" if plano_m else "—"
             cells[(lin, "GAP (t)")][sk]   = f"{int(round(real_m - plano_m)):+,}" if (real_m or plano_m) else "—"
@@ -1065,16 +1078,17 @@ def render(
         f"Linha ({len(lin_disp)} disponíveis)", lin_disp,
         default=lin_disp, key="assert_lin", placeholder="Todas as linhas",
     )
-    base_opcao = fcol3.selectbox(
-        "Base do cálculo de Assertividade",
-        options=["Base no Real  (1 − |R−P|/R)", "Base no Plano  (1 − |R−P|/P)"],
-        index=0,
-        key="assert_base",
-        help=(
-            "Base no Real: mede quanto da demanda real foi capturada.\n"
-            "Base no Plano: mede quanto o plano errou em relação à meta definida."
-        ),
-    )
+    with st.expander("&#x2699; Configurações avançadas", expanded=False):
+        base_opcao = st.selectbox(
+            "Base do cálculo de Assertividade",
+            options=["Base no Real  (1 − |R−P|/R)", "Base no Plano  (1 − |R−P|/P)"],
+            index=0,
+            key="assert_base",
+            help=(
+                "Base no Real: mede quanto da demanda real foi capturada.\n"
+                "Base no Plano: mede quanto o plano errou em relação à meta definida."
+            ),
+        )
     base_calc: str = "real" if "Real" in base_opcao else "plano"
 
     filtro_info = []
@@ -1124,6 +1138,34 @@ def render(
     gap_proj_sop = _gap_projetado(df_fil, "meta_sop", semanas) if tem_sop else 0.0
     gap_proj_soe = _gap_projetado(df_fil, "meta_soe", semanas) if tem_soe else 0.0
 
+    # Veredito comparativo S&OP vs S&OE (apenas quando ambos existem)
+    if m_sop and m_soe and not np.isnan(m_sop["assertividade"]) and not np.isnan(m_soe["assertividade"]):
+        diff_pp = m_soe["assertividade"] - m_sop["assertividade"]
+        melhor_label  = "S&amp;OE"
+        pior_label    = "S&amp;OP"
+        melhor_val    = m_soe["assertividade"]
+        pior_val      = m_sop["assertividade"]
+        if diff_pp < 0:
+            diff_pp = -diff_pp
+            melhor_label, pior_label = "S&amp;OP", "S&amp;OE"
+            melhor_val, pior_val     = m_sop["assertividade"], m_soe["assertividade"]
+        gap_ton_diff = abs(int(round(m_soe["gap"] - m_sop["gap"])))
+        sinal_recal  = "+" if m_soe["gap"] > m_sop["gap"] else "-"
+        st.markdown(
+            f'<div style="background:#FFFFFF;border-left:4px solid #3B82F6;border-radius:8px;'
+            f'padding:10px 18px;margin-bottom:12px;display:flex;align-items:center;gap:10px;'
+            f'box-shadow:0 1px 3px rgba(0,0,0,0.06);">'
+            f'<span style="font-size:16px;">&#x2696;</span>'
+            f'<span style="font-size:12px;font-family:{_FONT};color:#374151;">'
+            f'<b style="color:{COR_VERDE};">{melhor_label} ({melhor_val:.1f}%)</b>'
+            f' supera '
+            f'<b style="color:{COR_VERMELHO};">{pior_label} ({pior_val:.1f}%)</b>'
+            f' em <b>{diff_pp:.1f} pp</b>'
+            f' &mdash; recalibrar S&amp;OP em {sinal_recal}{gap_ton_diff:,} t'
+            f'</span></div>',
+            unsafe_allow_html=True,
+        )
+
     # Banner (baseado no plano com mais dados)
     m_ref = m_soe or m_sop
     if m_ref:
@@ -1131,7 +1173,7 @@ def render(
         if banner:
             st.markdown(banner, unsafe_allow_html=True)
 
-    # Sparklines: WMAPE histórico últimos 6 meses
+    # Sparklines: Assertividade histórica — últimos 6 meses
     def _hist_assertividade(col: str) -> list[float | None]:
         """Assertividade acumulada dos últimos 6 meses para sparkline."""
         vals: list[float | None] = []
@@ -1144,12 +1186,31 @@ def render(
                 vals.append(None); continue
             sems = set(sub.groupby("semana_mes")["vol_ton"].sum().pipe(lambda s: s[s > 0].index))
             s2 = sub[sub["semana_mes"].isin(sems)]
-            vals.append(_assertividade(s2["vol_ton"], s2[col], base_calc))
+            # Agrupa ao nível de planejamento antes de calcular erros absolutos
+            s2_g = _agrupar_nivel_plano(s2, col)
+            vals.append(_assertividade(s2_g["vol_ton"], s2_g[col], base_calc))
         vals.reverse()
         return vals
 
     hw_sop = _hist_assertividade("meta_sop") if tem_sop else []
     hw_soe = _hist_assertividade("meta_soe") if tem_soe else []
+
+    def _hist_gap(col: str) -> list[float | None]:
+        """GAP acumulado mensal (real − plano) dos últimos 6 meses para sparkline."""
+        vals: list[float | None] = []
+        a_h, m_h = ano_sel, mes_sel
+        for _ in range(6):
+            m_h -= 1
+            if m_h == 0: m_h, a_h = 12, a_h - 1
+            sub = df_f[(df_f["ano"] == a_h) & (df_f["mes"] == m_h)]
+            if sub.empty or col not in sub.columns or sub["vol_ton"].sum() == 0:
+                vals.append(None); continue
+            vals.append(float(sub["vol_ton"].sum() - sub[col].sum()))
+        vals.reverse()
+        return vals
+
+    hg_sop = _hist_gap("meta_sop") if tem_sop else []
+    hg_soe = _hist_gap("meta_soe") if tem_soe else []
 
     # ── [1] KPI Cards ─────────────────────────────────────────────────────────
     _secao(
@@ -1167,7 +1228,7 @@ def render(
             _ca(m_sop["assertividade"]),
             f"1 − MAPE · {base_lbl} · GAP {int(round(m_sop['gap'])):+,} t",
             [w for w in hw_sop if w is not None],
-            _GLOSSARIO["Aderência"],
+            _GLOSSARIO["Assertividade"],
         ), unsafe_allow_html=True)
     else:
         kc[0].markdown(_kpi_card("ASSERTIVIDADE S&OP", "—", "#94A3B8", "sem dados S&OP", []), unsafe_allow_html=True)
@@ -1179,7 +1240,7 @@ def render(
             _ca(m_soe["assertividade"]),
             f"1 − MAPE · {base_lbl} · GAP {int(round(m_soe['gap'])):+,} t",
             [w for w in hw_soe if w is not None],
-            _GLOSSARIO["Aderência"],
+            _GLOSSARIO["Assertividade"],
         ), unsafe_allow_html=True)
     else:
         kc[1].markdown(_kpi_card("ASSERTIVIDADE S&OE", "—", "#94A3B8", "sem dados S&OE", []), unsafe_allow_html=True)
@@ -1190,7 +1251,7 @@ def render(
             f"{int(round(m_sop['gap'])):+,} t",
             _cg(m_sop["gap"]),
             "ton a adicionar/subtrair no plano",
-            [v for v in hw_sop if v is not None],
+            [v for v in hg_sop if v is not None],
             _GLOSSARIO["GAP"],
         ), unsafe_allow_html=True)
     else:
@@ -1202,18 +1263,13 @@ def render(
             f"{int(round(m_soe['gap'])):+,} t",
             _cg(m_soe["gap"]),
             "ton a adicionar/subtrair no programa",
-            [v for v in hw_soe if v is not None],
+            [v for v in hg_soe if v is not None],
             _GLOSSARIO["GAP"],
         ), unsafe_allow_html=True)
     else:
         kc[3].markdown(_kpi_card("GAP S&OE (t)", "—", "#94A3B8", "sem dados S&OE", []), unsafe_allow_html=True)
 
     st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
-
-    # Diagnóstico abaixo dos cards
-    if m_ref:
-        diag = _tipo_desvio(m_ref["assertividade"], m_ref["bias"])
-        _render_recomendacoes(diag)
 
     # ── [2] Gráfico principal ─────────────────────────────────────────────────
     _secao(
@@ -1226,6 +1282,11 @@ def render(
         config={"displayModeBar": False},
         key=f"hz_{ano_sel}_{mes_sel}",
     )
+
+    # Diagnóstico após o gráfico principal
+    if m_ref:
+        diag = _tipo_desvio(m_ref["assertividade"], m_ref["bias"])
+        _render_recomendacoes(diag)
 
     # ── [3] Tabela agregada compacta ──────────────────────────────────────────
     _secao(

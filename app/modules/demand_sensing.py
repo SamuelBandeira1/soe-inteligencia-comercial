@@ -22,9 +22,11 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 from utils.calendar_tw import get_month_tw_ranges, tw_label as _tw_label
+from utils.metrics import bias as _bias, mc_drift as _mc_drift
 from utils.visual import (
     COR_PRIMARIA, COR_ACENTO, COR_VERDE, COR_AMARELO, COR_VERMELHO,
     COR_TEXTO, COR_GRID, fmt_ton as _fmt_ton,
@@ -84,11 +86,17 @@ def _calcular_metricas(df_hist: pd.DataFrame) -> dict:
         return {}
     erros = df_hist['erro']
     mape      = float((erros.abs()).mean() * 100)
-    bias      = float(erros.mean() * 100)
+    # HC-02/HC-T4: NAO unificar — objetos estatisticos distintos. Ver parecer 2026-05-30.
+    # 'bias' EXIBIDO segue HC-02 (razão-de-somas P−R, + = plano acima do real).
+    bias      = _bias(df_hist['vol_ton'], df_hist['meta'], base="real")
+    # 'mc_drift_frac' CENTRA o ruído do Monte Carlo (média-de-razões R−P).
+    # Sinal OPOSTO ao 'bias' exibido — intencional (HC-T4-4). NUNCA rotular "Bias".
+    mc_drift_frac = _mc_drift(df_hist['vol_ton'], df_hist['meta']) / 100.0
     hit_rate  = float((erros.abs() <= HIT_THRESH).mean() * 100)
     cv        = float(erros.std(ddof=1) * 100) if len(erros) > 1 else 0.0
     mae       = float((df_hist['vol_ton'] - df_hist['meta']).abs().mean())
-    return dict(mape=mape, bias=bias, hit_rate=hit_rate, cv=cv, mae=mae, n=len(df_hist))
+    return dict(mape=mape, bias=bias, mc_drift_frac=mc_drift_frac,
+                hit_rate=hit_rate, cv=cv, mae=mae, n=len(df_hist))
 
 
 def _pace_e_std(df_f: pd.DataFrame, semana_excl: tuple | None, n: int = N_PACE) -> tuple[float, float]:
@@ -208,7 +216,7 @@ def _monte_carlo_retroativo(
 def _monte_carlo(
     pace: float,
     std: float,
-    bias_frac: float,
+    mc_drift: float,
     pesos: dict,
     semanas: list,
     n_sim: int = N_SIM,
@@ -221,8 +229,11 @@ def _monte_carlo(
         n_sem = len(tw)
         peso_rel = _peso_global(pesos, sem, n_sem) / (1/n_sem)
         base = pace * peso_rel
-        # Cada simulação: ruído multiplicativo centrado no bias histórico
-        noise = rng.normal(loc=bias_frac, scale=std/pace if pace > 0 else 0.10, size=n_sim)
+        # Cada simulação: ruído multiplicativo centrado no drift do MC.
+        # HC-02/HC-T4: NAO unificar — objetos estatisticos distintos. Ver parecer 2026-05-30.
+        # mc_drift usa convenção R−P (exigida por base*(1+noise)); o 'bias' EXIBIDO usa
+        # P−R (HC-02). Sinais OPOSTOS para o mesmo dado — intencional (HC-T4-4).
+        noise = rng.normal(loc=mc_drift, scale=std/pace if pace > 0 else 0.10, size=n_sim)
         sims[:, i] = np.maximum(0, base * (1 + noise))
     return {
         'p10': np.percentile(sims, 10, axis=0),
@@ -260,33 +271,33 @@ def _render_hero(m: dict, col_meta: str) -> None:
     elif bias > 0:
         intensidade = "🚨" if bias > 15 else "⚠️"
         cor = COR_VERMELHO if bias > 15 else COR_AMARELO
-        emoji, titulo = intensidade, f"UNDERFORECASTING — Demanda sistematicamente acima do plano em {bias:.1f}%"
-        desc = (f"Nas últimas {n} semanas, as vendas foram em média <b>+{bias:.1f}%</b> "
+        emoji, titulo = intensidade, f"OVERFORECASTING — Plano sistematicamente acima da demanda em {bias:.1f}%"
+        desc = (f"Nas últimas {n} semanas, as vendas ficaram em média <b>{bias:.1f}%</b> "
+                f"abaixo do plano. O plano está criando expectativas acima da demanda real "
+                f"observada — risco de frustração de metas.")
+        # Faixa de revisão: bias ± 0,5σ, limitada a não descer abaixo de +3%
+        limite_inf = max(bias - cv * 0.5, 1)
+        limite_sup = max(bias + cv * 0.5, 3)
+        acao = (f"<b>Alerta de Overforecasting:</b> O plano está sistematicamente acima "
+                f"da capacidade de realização. Com base no bias observado ({bias:+.1f}%) e na "
+                f"volatilidade histórica (σ={cv:.1f}%), a <b>faixa de revisão sugerida</b> para "
+                f"o próximo ciclo S&OE é de <b>[-{limite_inf:.0f}%, -{limite_sup:.0f}%]</b>. "
+                f"Esta é uma faixa de tolerância estatística — não um número fixo. "
+                f"Avalie com o time de planejamento antes de ajustar.")
+
+    else:
+        intensidade = "🚨" if abs(bias) > 15 else "⚠️"
+        cor = COR_VERMELHO if abs(bias) > 15 else COR_AMARELO
+        emoji, titulo = intensidade, f"UNDERFORECASTING — Demanda sistematicamente acima do plano em {abs(bias):.1f}%"
+        desc = (f"Nas últimas {n} semanas, as vendas foram em média <b>+{abs(bias):.1f}%</b> "
                 f"acima do plano. A capacidade de entrega pode estar sendo subestimada.")
-        limite_inf = bias - cv * 0.5
-        limite_sup = bias + cv * 0.5
+        limite_inf = abs(bias) - cv * 0.5
+        limite_sup = abs(bias) + cv * 0.5
         acao = (f"<b>Alerta de Underforecasting:</b> O plano está sistematicamente abaixo "
                 f"da demanda real. Com base no bias observado ({bias:+.1f}%) e na volatilidade "
                 f"histórica (σ={cv:.1f}%), a <b>faixa de revisão sugerida</b> para o próximo "
                 f"ciclo S&OE é de <b>[+{limite_inf:.0f}%, +{limite_sup:.0f}%]</b>. "
                 f"Avalie com o time comercial antes de ajustar o plano.")
-
-    else:
-        intensidade = "🚨" if abs(bias) > 15 else "⚠️"
-        cor = COR_VERMELHO if abs(bias) > 15 else COR_AMARELO
-        emoji, titulo = intensidade, f"OVERFORECASTING — Plano sistematicamente acima da demanda em {abs(bias):.1f}%"
-        desc = (f"Nas últimas {n} semanas, as vendas ficaram em média <b>{bias:.1f}%</b> "
-                f"abaixo do plano. O plano está criando expectativas acima da demanda real "
-                f"observada — risco de frustração de metas.")
-        # Faixa de revisão: bias ± 0,5σ, limitada a não ultrapassar -3%
-        limite_inf = min(bias - cv * 0.5, -3)
-        limite_sup = min(bias + cv * 0.5, -1)
-        acao = (f"<b>Alerta de Overforecasting:</b> O plano está sistematicamente acima "
-                f"da capacidade de realização. Com base no bias observado ({bias:+.1f}%) e na "
-                f"volatilidade histórica (σ={cv:.1f}%), a <b>faixa de revisão sugerida</b> para "
-                f"o próximo ciclo S&OE é de <b>[{limite_inf:.0f}%, {limite_sup:.0f}%]</b>. "
-                f"Esta é uma faixa de tolerância estatística — não um número fixo. "
-                f"Avalie com o time de planejamento antes de ajustar.")
 
     plano_label = "S&OP" if col_meta == "meta_sop" else "S&OE"
 
@@ -354,189 +365,316 @@ def _render_kpis(m: dict) -> None:
     st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
 
-def _render_erro_historico(df_hist: pd.DataFrame, kp: str) -> None:
+def _narrativa_diagnostico(erros_pct: np.ndarray, bias: float, mape: float) -> tuple[str, str]:
+    """
+    Gera frase curta de diagnóstico e cor semáforo a partir dos dados históricos.
+    Retorna (texto_html, cor_hex).
+    """
+    n = len(erros_pct)
+    abaixo = int((erros_pct < 0).sum())
+    acima  = int((erros_pct >= 0).sum())
+
+    # Tendência recente: últimas 4 semanas
+    recentes = erros_pct[-4:] if n >= 4 else erros_pct
+    tend_neg = int((recentes < 0).sum())
+    tend_pos = int((recentes >= 0).sum())
+
+    # Cor semáforo
+    if mape <= 15 and abs(bias) <= 8:
+        cor = "#10B981"   # verde
+    elif mape <= 30 or abs(bias) <= 20:
+        cor = "#F59E0B"   # amarelo
+    else:
+        cor = "#EF4444"   # vermelho
+
+    # Diagnóstico de viés
+    if bias > 10:
+        direcao = f"<b>O plano superestima sistematicamente</b> a demanda real " \
+                  f"(Bias {bias:+.1f}% — plano {bias:.0f}% acima do que se vende)."
+    elif bias < -10:
+        direcao = f"<b>O plano subestima sistematicamente</b> a demanda real " \
+                  f"(Bias {bias:+.1f}% — real {abs(bias):.0f}% acima do planejado)."
+    else:
+        direcao = f"Plano sem viés sistemático relevante (Bias {bias:+.1f}%)."
+
+    # Tendência recente
+    if tend_neg >= 3:
+        tend_txt = f"Tendência recente preocupante: <b>{tend_neg} das últimas {len(recentes)} semanas</b> " \
+                   f"com realizado abaixo do plano."
+    elif tend_pos >= 3:
+        tend_txt = f"Tendência recente positiva: <b>{tend_pos} das últimas {len(recentes)} semanas</b> " \
+                   f"com realizado acima do plano."
+    else:
+        tend_txt = f"Comportamento misto nas últimas semanas ({acima} acima · {abaixo} abaixo no período)."
+
+    # Precisão
+    if mape <= 15:
+        prec_txt = f"Precisão boa: MAPE {mape:.1f}% — variação dentro do aceitável."
+    elif mape <= 35:
+        prec_txt = f"Precisão moderada: MAPE {mape:.1f}% — calibração necessária."
+    else:
+        prec_txt = f"Precisão baixa: MAPE {mape:.1f}% — plano pouco aderente à demanda real."
+
+    texto = f"{direcao} {tend_txt} {prec_txt}"
+    return texto, cor
+
+
+def _render_historico_combinado(df_hist: pd.DataFrame, kp: str) -> None:
+    """
+    Gráfico combinado (make_subplots 2 linhas, eixo X compartilhado) com:
+      — Row 1: Erro % semanal + envelope MAPE + bias
+      — Row 2: Volume realizado vs plano + linha de erro em ton (eixo secundário)
+    A narrativa de diagnóstico é renderizada fora do Plotly via st.markdown,
+    eliminando problemas de posicionamento de annotations.
+    """
     if df_hist.empty:
         return
 
-    erros  = df_hist['erro'].values * 100
-    labels = df_hist['label'].values
-    vols   = df_hist['vol_ton'].values
-    metas  = df_hist['meta'].values
-    mape   = float(np.abs(erros).mean())
-    bias   = float(erros.mean())
+    _FONT = "Inter, Arial, sans-serif"
 
-    cores = [COR_VERDE if e >= 0 else COR_VERMELHO for e in erros]
+    labels    = df_hist['label'].values
+    vols      = df_hist['vol_ton'].values
+    metas     = df_hist['meta'].values
+    erros_pct = df_hist['erro'].values * 100
+    erros_ton = vols - metas
+    mape      = float(np.abs(erros_pct).mean())
+    bias      = float(erros_pct.mean())
+    mae       = float(np.abs(erros_ton).mean())
 
-    fig = go.Figure()
+    # ── Narrativa — renderizada como HTML Streamlit (não dentro do gráfico) ──
+    narrativa_txt, cor_narrativa = _narrativa_diagnostico(erros_pct, bias, mape)
+    _bg_rgba = {
+        "#10B981": "rgba(16,185,129,0.08)",
+        "#F59E0B": "rgba(245,158,11,0.08)",
+        "#EF4444": "rgba(239,68,68,0.08)",
+    }.get(cor_narrativa, "rgba(148,163,184,0.08)")
+    _icone = "●" if cor_narrativa == "#EF4444" else "◆" if cor_narrativa == "#F59E0B" else "✔"
 
-    # Barras de erro
+    st.markdown(
+        f'<div style="'
+        f'background:{_bg_rgba};border-left:4px solid {cor_narrativa};'
+        f'border-radius:6px;padding:10px 16px;margin:0 0 12px 0;'
+        f'font-family:{_FONT};font-size:13px;color:#374151;line-height:1.6;">'
+        f'<span style="color:{cor_narrativa};font-weight:700;">{_icone} Diagnóstico</span> — '
+        f'{narrativa_txt}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Cap de outliers no eixo % (evita escala distorcida) ──────────────────
+    CAP = 150.0
+    erros_pct_plot = np.clip(erros_pct, -CAP, CAP)
+    outliers_idx   = np.where(np.abs(erros_pct) > CAP)[0]
+
+    cores_err = [COR_VERDE if e >= 0 else COR_VERMELHO for e in erros_pct]
+    cores_vol = [COR_VERDE if v >= m else COR_VERMELHO for v, m in zip(vols, metas)]
+
+    # ── make_subplots: ambas as linhas com secondary_y — domínio X idêntico ──
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.44, 0.56],
+        specs=[
+            [{"secondary_y": False}],   # row 1 — erro %
+            [{"secondary_y": True}],    # row 2 — volume + erro ton
+        ],
+    )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ROW 1 — Erro % semanal
+    # ═══════════════════════════════════════════════════════════════════════════
+
     fig.add_trace(go.Bar(
-        x=labels, y=erros,
-        marker_color=cores,
-        marker_line=dict(color="rgba(0,0,0,0.08)", width=1),
-        text=[f"{e:+.1f}%" for e in erros],
+        x=labels, y=erros_pct_plot,
+        marker_color=cores_err,
+        marker_line=dict(color="rgba(0,0,0,0.06)", width=0.5),
+        text=[
+            f"{erros_pct[i]:+.1f}%" + ("*" if i in outliers_idx else "")
+            for i in range(len(erros_pct))
+        ],
         textposition="outside",
-        textfont=dict(size=10, color=COR_TEXTO, family="Arial"),
+        textfont=dict(size=9, color="#64748B", family=_FONT),
+        cliponaxis=False,
+        name="Erro semanal",
         hovertemplate=(
             "<b>%{x}</b><br>"
-            "Erro: <b>%{y:+.1f}%</b><br>"
-            "Realizado: %{customdata[0]} ton<br>"
-            "Plano: %{customdata[1]} ton"
+            "Erro: <b>%{customdata[0]}</b><br>"
+            "Realizado: %{customdata[1]} ton | Plano: %{customdata[2]} ton"
             "<extra></extra>"
         ),
-        customdata=list(zip(
-            [f"{v:,.0f}".replace(",",".") for v in vols],
-            [f"{v:,.0f}".replace(",",".") for v in metas],
-        )),
-        name="Erro semanal",
-        cliponaxis=False,
-    ))
+        customdata=[
+            [f"{erros_pct[i]:+.1f}%",
+             f"{vols[i]:,.0f}".replace(",", "."),
+             f"{metas[i]:,.0f}".replace(",", ".")]
+            for i in range(len(labels))
+        ],
+    ), row=1, col=1)
 
-    # Linha de MAPE (envelope)
+    # Envelope MAPE
     fig.add_trace(go.Scatter(
-        x=labels, y=[mape]*len(labels),
+        x=labels, y=[mape] * len(labels),
         mode="lines", line=dict(color=COR_VERDE, dash="dot", width=1.5),
-        name=f"MAPE +{mape:.1f}%", hoverinfo="skip",
-    ))
+        name=f"Envelope ±MAPE ({mape:.1f}%)", hoverinfo="skip",
+    ), row=1, col=1)
     fig.add_trace(go.Scatter(
-        x=labels, y=[-mape]*len(labels),
+        x=labels, y=[-mape] * len(labels),
         mode="lines", line=dict(color=COR_VERDE, dash="dot", width=1.5),
-        name=f"MAPE −{mape:.1f}%", hoverinfo="skip",
-    ))
+        showlegend=False, hoverinfo="skip",
+    ), row=1, col=1)
 
     # Linha de bias
-    fig.add_hline(y=bias, line_dash="dash", line_color=COR_ACENTO, line_width=2.5,
-                  annotation_text=f"Bias {bias:+.1f}%", annotation_position="bottom right",
-                  annotation_font=dict(size=11, color=COR_ACENTO, family="Arial"))
-    fig.add_hline(y=0, line_color="#B0BEC5", line_width=1)
-
-    fig.update_layout(
-        height=340,
-        title=dict(
-            text="<b>Erro Histórico Semanal — Realizado vs Plano</b>  "
-                 "<span style='font-size:12px;font-weight:normal;color:#666'>"
-                 "(verde = acima do plano · vermelho = abaixo)</span>",
-            font=dict(size=14, color=COR_PRIMARIA, family="Arial"), x=0,
-        ),
-        margin=dict(t=48, b=64, l=65, r=20),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(tickfont=dict(size=10), gridcolor=COR_GRID, tickangle=-35),
-        yaxis=dict(title="Erro (%)", ticksuffix="%", gridcolor=COR_GRID,
-                   zeroline=False, tickfont=dict(size=11)),
-        legend=dict(orientation="h", y=1.08, x=1, xanchor="right",
-                    font=dict(size=10)),
-        font=dict(family="Arial", size=11, color=COR_TEXTO),
+    fig.add_hline(
+        y=bias, line_dash="dash", line_color=COR_ACENTO, line_width=2,
+        annotation_text=f"Bias {bias:+.1f}%",
+        annotation_position="top right" if bias >= 0 else "bottom right",
+        annotation_font=dict(size=10, color=COR_ACENTO, family=_FONT),
+        row=1, col=1,
     )
-    st.plotly_chart(fig, use_container_width=True,
-                    config={"displayModeBar": False}, key=f"{kp}_hist_chart")
+    fig.add_hline(y=0, line_color="#CBD5E1", line_width=1, row=1, col=1)
 
+    # Outliers: badge dentro da barra (não vaza para fora)
+    for i in outliers_idx:
+        real_val = erros_pct[i]
+        y_pos = CAP * 0.75 if real_val > 0 else -CAP * 0.75
+        fig.add_annotation(
+            x=labels[i], y=y_pos,
+            text=f"<b>{real_val:+.0f}%</b>",
+            showarrow=False,
+            font=dict(size=9, color="white", family=_FONT),
+            bgcolor=cores_err[i],
+            borderpad=3, yanchor="middle",
+            row=1, col=1,
+        )
 
-def _render_volume_historico(df_hist: pd.DataFrame, kp: str) -> None:
-    """
-    Gráfico de volume realizado vs plano com barras de erro em toneladas.
-    Complementa o gráfico de erro percentual mostrando a magnitude absoluta.
-    """
-    if df_hist.empty:
-        return
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ROW 2 — Volume realizado vs plano + erro ton
+    # ═══════════════════════════════════════════════════════════════════════════
 
-    labels = df_hist['label'].values
-    vols   = df_hist['vol_ton'].values
-    metas  = df_hist['meta'].values
-    erros  = vols - metas          # erro em ton (positivo = acima do plano)
-    mae    = float(np.abs(erros).mean())
-
-    fig = go.Figure()
-
-    # ── Barras de meta (fundo, mais clara) ───────────────────────
+    # Plano (fundo)
     fig.add_trace(go.Bar(
         x=labels, y=metas,
-        name="Plano",
-        marker_color=COR_PRIMARIA,
-        opacity=0.35,
-        marker_line=dict(color=COR_PRIMARIA, width=1),
+        name="Plano", marker_color="#E2E8F0",
+        marker_line=dict(color="#CBD5E1", width=0.5),
         hovertemplate="<b>%{x}</b><br>Plano: <b>%{y:,.0f} ton</b><extra></extra>",
-    ))
+    ), row=2, col=1, secondary_y=False)
 
-    # ── Barras de realizado ───────────────────────────────────────
-    cores_vol = [COR_VERDE if v >= m else COR_VERMELHO
-                 for v, m in zip(vols, metas)]
+    # Realizado (frente)
     fig.add_trace(go.Bar(
         x=labels, y=vols,
-        name="Realizado",
-        marker_color=cores_vol,
-        marker_line=dict(color="rgba(0,0,0,0.10)", width=1),
-        opacity=0.85,
+        name="Realizado", marker_color=cores_vol,
+        marker_line=dict(color="rgba(0,0,0,0.08)", width=0.5),
+        opacity=0.90,
         text=[_fmt_ton(v) for v in vols],
         textposition="outside",
-        textfont=dict(size=9, color=COR_TEXTO, family="Arial"),
+        textfont=dict(size=9, color="#64748B", family=_FONT),
         cliponaxis=False,
         hovertemplate="<b>%{x}</b><br>Realizado: <b>%{y:,.0f} ton</b><extra></extra>",
-    ))
+    ), row=2, col=1, secondary_y=False)
 
-    # ── Linha de erro em volume (eixo secundário) ─────────────────
+    # Linha de erro em ton (eixo secundário nativo do subplot)
     fig.add_trace(go.Scatter(
-        x=labels, y=erros,
-        name="Erro (ton)",
+        x=labels, y=erros_ton,
+        name=f"Erro ton  (MAE ±{_fmt_ton(mae)})",
         mode="lines+markers",
-        yaxis="y2",
         line=dict(color=COR_ACENTO, width=2, dash="dot"),
-        marker=dict(size=7, color=COR_ACENTO, symbol="circle",
-                    line=dict(color="white", width=1.5)),
+        marker=dict(size=6, color=COR_ACENTO, line=dict(color="white", width=1.2)),
         hovertemplate="<b>%{x}</b><br>Erro: <b>%{y:+,.0f} ton</b><extra></extra>",
-    ))
+    ), row=2, col=1, secondary_y=True)
 
-    # ── MAE como banda de referência no eixo secundário ──────────
+    # Banda MAE (eixo secundário)
     fig.add_trace(go.Scatter(
         x=list(labels) + list(labels[::-1]),
-        y=[mae]*len(labels) + [-mae]*len(labels),
-        fill="toself",
-        fillcolor="rgba(59,130,246,0.08)",
+        y=[mae] * len(labels) + [-mae] * len(labels),
+        fill="toself", fillcolor="rgba(217,119,6,0.07)",
         line=dict(color="rgba(0,0,0,0)"),
-        yaxis="y2",
-        name=f"MAE ±{_fmt_ton(mae)} ton",
-        hoverinfo="skip",
-    ))
+        name=f"Banda MAE", hoverinfo="skip", showlegend=True,
+    ), row=2, col=1, secondary_y=True)
 
-    # Linha zero no eixo secundário
-    fig.add_hline(y=0, line_color="#B0BEC5", line_width=1,
-                  line_dash="solid", secondary_y=False)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LAYOUT
+    # ═══════════════════════════════════════════════════════════════════════════
 
-    y_max_vol = float(max(vols.max(), metas.max())) * 1.25 if len(vols) else 1
-    y_max_err = float(np.abs(erros).max()) * 1.6 if len(erros) else 1
+    y_max_vol = float(max(vols.max(), metas.max())) * 1.28 if len(vols) else 1
+    y_max_err = float(np.abs(erros_ton).max()) * 1.8 if len(erros_ton) else 1
+    y1_abs    = min(
+        max(float(np.abs(erros_pct_plot).max()) * 1.30, mape * 1.5),
+        CAP * 1.08,
+    )
 
     fig.update_layout(
-        height=320,
-        title=dict(
-            text="<b>Volume Realizado vs Plano</b>  "
-                 "<span style='font-size:12px;font-weight:normal;color:#666'>"
-                 "(barras sobrepostas · linha laranja = erro em ton · "
-                 f"MAE = ±{_fmt_ton(mae)} ton)</span>",
-            font=dict(size=14, color=COR_PRIMARIA, family="Arial"), x=0,
-        ),
+        height=540,
         barmode="overlay",
-        margin=dict(t=48, b=64, l=70, r=70),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(tickfont=dict(size=10), gridcolor=COR_GRID, tickangle=-35),
-        yaxis=dict(
-            title="Volume (ton)", gridcolor=COR_GRID,
-            tickformat=",", tickfont=dict(size=11),
-            range=[0, y_max_vol],
-        ),
-        yaxis2=dict(
-            title=dict(text="Erro (ton)", font=dict(color=COR_ACENTO, family="Arial", size=11)),
-            overlaying="y", side="right",
-            tickformat="+,", tickfont=dict(size=10, color=COR_ACENTO),
-            range=[-y_max_err, y_max_err],
-            showgrid=False, zeroline=True,
-            zerolinecolor="#B0BEC5", zerolinewidth=1,
-        ),
-        legend=dict(orientation="h", y=1.10, x=1, xanchor="right",
-                    font=dict(size=10), bgcolor="rgba(255,255,255,0.85)"),
-        font=dict(family="Arial", size=11, color=COR_TEXTO),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family=_FONT, size=11, color=COR_TEXTO),
         hovermode="x unified",
+        margin=dict(t=36, b=56, l=68, r=72),
+        legend=dict(
+            orientation="h", y=-0.11, x=0.5, xanchor="center",
+            font=dict(size=10, family=_FONT, color="#64748B"),
+            bgcolor="rgba(255,255,255,0.92)",
+            bordercolor="#E2E8F0", borderwidth=1,
+        ),
+        hoverlabel=dict(
+            bgcolor="#1E293B",
+            font=dict(color="white", size=12, family=_FONT),
+            bordercolor="#1E293B",
+        ),
     )
+
+    # Eixos row 1
+    fig.update_yaxes(
+        title_text="Erro (%)", ticksuffix="%",
+        gridcolor=COR_GRID, zeroline=False,
+        tickfont=dict(size=10), range=[-y1_abs, y1_abs],
+        row=1, col=1,
+    )
+    # Eixos row 2 — primário (volume)
+    fig.update_yaxes(
+        title_text="Volume (ton)",
+        gridcolor=COR_GRID, tickformat=",.0f",
+        tickfont=dict(size=10), range=[0, y_max_vol],
+        secondary_y=False, row=2, col=1,
+    )
+    # Eixos row 2 — secundário (erro ton)
+    fig.update_yaxes(
+        title_text="Erro (ton)",
+        title_font=dict(color=COR_ACENTO, size=10),
+        tickformat="+,.0f",
+        tickfont=dict(size=9, color=COR_ACENTO),
+        range=[-y_max_err, y_max_err],
+        showgrid=False, zeroline=True,
+        zerolinecolor="#E2E8F0", zerolinewidth=1,
+        secondary_y=True, row=2, col=1,
+    )
+    # X topo (row 1) — oculta labels duplicados
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    # X fundo (row 2) — labels inclinados
+    fig.update_xaxes(
+        tickangle=-45, gridcolor=COR_GRID,
+        tickfont=dict(size=9, family=_FONT, color="#64748B"),
+        linecolor="#E2E8F0",
+        row=2, col=1,
+    )
+
+    # Subtítulos dos painéis (annotations simples, sem width)
+    fig.add_annotation(
+        xref="paper", yref="paper", x=0, y=1.02,
+        text="<b>Erro % semanal</b>  "
+             "<span style='color:#94A3B8'>verde = acima · vermelho = abaixo do plano</span>",
+        showarrow=False, font=dict(size=12, color=COR_PRIMARIA, family=_FONT),
+        xanchor="left", yanchor="bottom",
+    )
+    fig.add_annotation(
+        xref="paper", yref="paper", x=0, y=0.50,
+        text="<b>Volume realizado vs plano</b>  "
+             "<span style='color:#94A3B8'>linha laranja = erro absoluto em toneladas</span>",
+        showarrow=False, font=dict(size=12, color=COR_PRIMARIA, family=_FONT),
+        xanchor="left", yanchor="bottom",
+    )
+
     st.plotly_chart(fig, use_container_width=True,
-                    config={"displayModeBar": False}, key=f"{kp}_vol_chart")
+                    config={"displayModeBar": False}, key=f"{kp}_hist_combinado")
 
 
 def _render_exec_summary(metricas: dict, df_hist: pd.DataFrame, col_meta: str) -> None:
@@ -570,13 +708,13 @@ def _render_exec_summary(metricas: dict, df_hist: pd.DataFrame, col_meta: str) -
         bias_txt = (f"O <b>Bias de {bias:+.1f}%</b> indica que o plano {plano} está "
                     f"bem calibrado — sem tendência sistemática de super ou subestimação.")
     elif bias > 0:
-        bias_txt = (f"O <b>Bias positivo de +{bias:.1f}%</b> indica que a demanda real "
-                    f"supera sistematicamente o plano {plano}. Há potencial de volume "
-                    f"não capturado nas metas.")
-    else:
-        bias_txt = (f"O <b>Bias negativo de {bias:.1f}%</b> é um sinal claro de "
+        bias_txt = (f"O <b>Bias positivo de +{bias:.1f}%</b> é um sinal claro de "
                     f"<b>Overforecasting</b>: o plano {plano} está sendo elaborado acima "
                     f"da capacidade real de realização nas últimas {n} semanas.")
+    else:
+        bias_txt = (f"O <b>Bias negativo de {bias:.1f}%</b> indica que a demanda real "
+                    f"supera sistematicamente o plano {plano}. Há potencial de volume "
+                    f"não capturado nas metas.")
 
     if hit_rate >= 60:
         hit_txt = (f"A <b>Assertividade de {hit_rate:.0f}%</b> mostra que o plano acerta "
@@ -603,15 +741,15 @@ def _render_exec_summary(metricas: dict, df_hist: pd.DataFrame, col_meta: str) -
         rec_borda = "#1A7A40"
         rec = ("✅ O processo de planejamento está funcionando bem. Mantenha o monitoramento "
                "semanal e acione revisão apenas se o bias sair da faixa ±5% por 3+ semanas consecutivas.")
-    elif bias < -10 or (bias < -5 and hit_rate < 50):
+    elif bias > 10 or (bias > 5 and hit_rate < 50):
         rec_cor = "#C0392B"
         rec_bg  = "#FFF5F5"
         rec_borda = "#C0392B"
         rec = (f"🚨 Revisão do plano {plano} recomendada para o próximo ciclo. "
-               f"O Overforecasting sistemático de {abs(bias):.1f}% está criando expectativas "
+               f"O Overforecasting sistemático de {bias:.1f}% está criando expectativas "
                f"que a equipe comercial não consegue sustentar. Priorize alinhamento com o "
                f"time de planejamento antes de publicar o próximo plano.")
-    elif bias > 10:
+    elif bias < -10:
         rec_cor = "#C0392B"
         rec_bg  = "#FFF8F0"
         rec_borda = "#FFA726"
@@ -649,7 +787,7 @@ def _render_exec_summary(metricas: dict, df_hist: pd.DataFrame, col_meta: str) -
     )
 
 
-def _render_mc_intro(metricas: dict, pace: float, std: float, bias_frac: float) -> None:
+def _render_mc_intro(metricas: dict, pace: float, std: float, mc_drift: float) -> None:
     """
     Card didático: o que é Monte Carlo + como os cenários são calculados
     + evidência de validade com os dados históricos reais.
@@ -658,19 +796,21 @@ def _render_mc_intro(metricas: dict, pace: float, std: float, bias_frac: float) 
     mape     = metricas.get('mape', 0)
     hit_rate = metricas.get('hit_rate', 0)
     n        = metricas.get('n', 0)
-    bias_pct = bias_frac * 100
+    # HC-T4-3/G-3: descreve o DRIFT do MC (tendência do forecast, sinal R−P),
+    # NÃO o "Bias do plano" exibido (HC-02, sinal P−R). Grandezas distintas.
+    drift_pct = mc_drift * 100
 
     cor_hit  = COR_VERDE if hit_rate >= 60 else COR_AMARELO if hit_rate >= 40 else COR_VERMELHO
     cor_mape = COR_VERDE if mape < 10 else COR_AMARELO if mape < 20 else COR_VERMELHO
 
-    if abs(bias_pct) < 3:
+    if abs(drift_pct) < 3:
         bias_txt = "O plano está bem calibrado — sem correção de tendência aplicada."
-    elif bias_pct > 0:
-        bias_txt = (f"O realizado ficou em média <b>+{bias_pct:.1f}%</b> acima do plano nas últimas "
-                    f"{n} semanas → os cenários são <b>ajustados para cima</b> para refletir esse padrão.")
+    elif drift_pct > 0:
+        bias_txt = (f"O realizado ficou em média <b>+{drift_pct:.1f}%</b> acima do plano nas últimas "
+                    f"{n} semanas → os cenários são <b>ajustados para cima</b> para refletir essa tendência.")
     else:
-        bias_txt = (f"O realizado ficou em média <b>{bias_pct:.1f}%</b> abaixo do plano nas últimas "
-                    f"{n} semanas → os cenários são <b>ajustados para baixo</b> para refletir esse padrão.")
+        bias_txt = (f"O realizado ficou em média <b>{drift_pct:.1f}%</b> abaixo do plano nas últimas "
+                    f"{n} semanas → os cenários são <b>ajustados para baixo</b> para refletir essa tendência.")
 
     # ── Cabeçalho do bloco ────────────────────────────────────────
     st.markdown(
@@ -1152,25 +1292,25 @@ def _render_monte_carlo(
         x=last_label, y=float(p90[-1]),
         text="Otimista<br>(P90)",
         showarrow=False,
-        xanchor="left", yanchor="middle",
-        font=dict(size=9, color=COR_VERDE, family="Arial Bold"),
-        xshift=8,
+        xanchor="right", yanchor="middle",
+        font=dict(size=9, color=COR_VERDE, family="Inter, Arial, sans-serif"),
+        xshift=-8,
     )
     fig.add_annotation(
         x=last_label, y=float(p50[-1]),
         text="Central<br>(P50)",
         showarrow=False,
-        xanchor="left", yanchor="middle",
-        font=dict(size=9, color=COR_ACENTO, family="Arial Bold"),
-        xshift=8,
+        xanchor="right", yanchor="middle",
+        font=dict(size=9, color=COR_ACENTO, family="Inter, Arial, sans-serif"),
+        xshift=-8,
     )
     fig.add_annotation(
         x=last_label, y=float(p10[-1]),
         text="Conservador<br>(P10)",
         showarrow=False,
-        xanchor="left", yanchor="middle",
-        font=dict(size=9, color=COR_VERMELHO, family="Arial Bold"),
-        xshift=8,
+        xanchor="right", yanchor="middle",
+        font=dict(size=9, color=COR_VERMELHO, family="Inter, Arial, sans-serif"),
+        xshift=-8,
     )
 
     has_hist = semanas_hist and mc_hist and realizados_hist
@@ -1187,13 +1327,13 @@ def _render_monte_carlo(
                 "1.000 simulações · faixa laranja = futuro"
                 f"{title_hist}</span>"
             ),
-            font=dict(size=14, color=COR_PRIMARIA, family="Arial"), x=0,
+            font=dict(size=14, color=COR_PRIMARIA, family="Inter, Arial, sans-serif"), x=0,
             pad=dict(b=8),
         ),
-        margin=dict(t=72, b=110, l=75, r=110),
+        margin=dict(t=72, b=110, l=75, r=130),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
-            tickfont=dict(size=11), gridcolor=COR_GRID, tickangle=-20,
+            tickfont=dict(size=11), gridcolor=COR_GRID, tickangle=-45,
             categoryorder="array",
             categoryarray=labels_all if has_hist else labels_fut,
         ),
@@ -1209,7 +1349,7 @@ def _render_monte_carlo(
             bordercolor="#E0E0E0", borderwidth=1,
             tracegroupgap=4,
         ),
-        font=dict(family="Arial", size=11, color=COR_TEXTO),
+        font=dict(family="Inter, Arial, sans-serif", size=11, color=COR_TEXTO),
         hovermode="x unified",
     )
     st.plotly_chart(fig, use_container_width=True,
@@ -1369,11 +1509,8 @@ def render(
     # ── KPIs ────────────────────────────────────────────────────────
     _render_kpis(metricas)
 
-    # ── Gráfico de erro histórico % (largura total) ───────────────
-    _render_erro_historico(df_hist, kp)
-
-    # ── Gráfico de volume realizado vs plano + erro absoluto ──────
-    _render_volume_historico(df_hist, kp)
+    # ── Gráfico combinado: erro % + volume (eixo X compartilhado) ─
+    _render_historico_combinado(df_hist, kp)
 
     # ── Executive summary — leitura automática para o coordenador ─
     _render_exec_summary(metricas, df_hist, col_meta)
@@ -1391,7 +1528,9 @@ def render(
         st.info("Sem histórico de vendas suficiente para gerar projeção.")
         return
 
-    bias_frac = metricas.get('bias', 0) / 100.0
+    # HC-T4-1/2: o MC lê o campo DEDICADO 'mc_drift_frac' (média-de-razões R−P),
+    # NUNCA 'metricas[bias]' (HC-02, razão-de-somas P−R). Nome sem "bias".
+    mc_drift = metricas.get('mc_drift_frac', 0.0)
 
     # ── Semanas futuras ────────────────────────────────────────────
     semanas = _semanas_futuras(ano_sel, mes_sel, semana_atual, n_semanas, n=N_FUTURO)
@@ -1400,7 +1539,7 @@ def render(
         return
 
     # ── Monte Carlo ────────────────────────────────────────────────
-    mc = _monte_carlo(pace, std, bias_frac, pesos, semanas, n_sim=N_SIM)
+    mc = _monte_carlo(pace, std, mc_drift, pesos, semanas, n_sim=N_SIM)
 
     # ── Monte Carlo retroativo (últimas 8 semanas históricas) ──────
     semanas_hist, mc_hist, realizados_hist = _monte_carlo_retroativo(
@@ -1408,7 +1547,7 @@ def render(
     )
 
     # ── Introdução didática ────────────────────────────────────────
-    _render_mc_intro(metricas, pace, std, bias_frac)
+    _render_mc_intro(metricas, pace, std, mc_drift)
 
     # ── Cards de cenários (P10 / P50 / P90 totais) ────────────────
     _render_mc_scenarios(semanas, mc)
@@ -1440,7 +1579,8 @@ def render(
 | Métrica | Fórmula | Interpretação |
 |---|---|---|
 | **MAPE** | média(|real − plano| / plano) × 100 | Erro médio absoluto em % — menor = melhor |
-| **Bias** | média((real − plano) / plano) × 100 | + = subestimando · − = superestimando |
+| **Bias (exibido)** | Σ(plano − real) / Σreal × 100 (razão-de-somas, sinal P−R) | + = plano acima do real (overforecasting) · − = plano abaixo do real (underforecasting) |
+| **Drift do Monte Carlo** | média((real − plano) / plano) × 100 (média-de-razões, sinal R−P) | Tendência usada para centrar a simulação — **NÃO** é o mesmo objeto estatístico que o Bias e pode divergir dele |
 | **Assertividade** | % semanas com erro ≤ ±{HIT_THRESH:.0%} | Meta: ≥ 60% |
 | **Volatilidade** | desvio padrão dos erros (%) | Mede consistência da demanda |
 | **MAE** | média(|real − plano|) em ton | Erro médio em volume absoluto |
@@ -1448,7 +1588,7 @@ def render(
 **Monte Carlo** ({N_SIM:,} simulações · seed fixo para reprodutibilidade)
 - **Pace base**: média das últimas {N_PACE} semanas completas (ton/semana)
 - **Ajuste sazonal**: peso histórico da semana ÷ peso médio de referência
-- **Ruído**: distribuído como Normal(bias, volatilidade_histórica)
+- **Ruído**: distribuído como Normal(mc_drift, volatilidade_histórica)
 - **P10**: pior cenário (10% das simulações ficaram abaixo)
 - **P50**: cenário central / mediana (forecast principal)
 - **P90**: melhor cenário (10% das simulações ficaram acima)

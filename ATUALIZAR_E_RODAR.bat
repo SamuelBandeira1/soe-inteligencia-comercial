@@ -12,7 +12,9 @@ echo.
 
 cd /d "%~dp0"
 
-:: ── Verifica venv ─────────────────────────────────────────
+:: ---------------------------------------------------------
+::  Verifica venv
+:: ---------------------------------------------------------
 if not exist "venv\Scripts\python.exe" (
     echo  [ERRO] Ambiente virtual nao encontrado em venv\
     echo  Execute no terminal:
@@ -30,7 +32,22 @@ set PY=venv\Scripts\python.exe
 echo  [1/3] Incrementando base de vendas mensal...
 echo  --------------------------------------------------------
 echo.
-%PY% scripts\incrementa_vendas_diario.py
+echo   Qual mes voce quer atualizar?
+echo   - Deixe em branco e pressione Enter para deteccao automatica
+echo     (usa o mes corrente; se nao houver arquivo dele, usa o
+echo      arquivo vendas_soe_mes_*.csv mais recente que voce modificou).
+echo   - Ou digite no formato AAAA-MM  (ex.: 2026-05 para maio).
+echo.
+set "MES="
+set /p MES="  Mes a atualizar [Enter = automatico]: "
+echo.
+
+if defined MES (
+    %PY% scripts\incrementa_vendas_diario.py --mes !MES!
+) else (
+    %PY% scripts\incrementa_vendas_diario.py
+)
+
 if errorlevel 1 (
     echo.
     echo  [AVISO] Nao foi possivel atualizar a base de vendas.

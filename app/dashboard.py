@@ -444,7 +444,7 @@ _COR_PROJ      = 'rgba(59,130,246,0.08)'
 _COR_CTG       = '#D97706'
 _COR_GAP_POS   = '#10B981'
 _COR_GAP_NEG   = '#EF4444'
-_COR_WEEKEND   = '#F1F5F9'
+_COR_WEEKEND   = '#D1D5DB'
 
 def _base_layout(**kwargs):
     """Retorna dict de layout Plotly com estilo light premium."""
@@ -661,10 +661,10 @@ def make_gauge(valor_pct, titulo, height=180):
         domain={'x': [0, 1], 'y': [0, 1]},
         gauge={
             'axis': {
-                'range': [0, 120],
+                'range': [0, 130],
                 'tickwidth': 1,
                 'tickcolor': '#B0BEC5',
-                'tickfont': {'size': 8, 'color': '#90A4AE'},
+                'tickfont': {'size': 8, 'color': '#64748B'},
                 'nticks': 7,
             },
             'bar': {'color': cor, 'thickness': 0.68},
@@ -673,7 +673,7 @@ def make_gauge(valor_pct, titulo, height=180):
             'steps': [
                 {'range': [0,  75],  'color': 'rgba(239,68,68,0.15)'},
                 {'range': [75, 90],  'color': 'rgba(245,158,11,0.15)'},
-                {'range': [90, 120], 'color': 'rgba(16,185,129,0.15)'},
+                {'range': [90, 130], 'color': 'rgba(16,185,129,0.15)'},
             ],
             'threshold': {
                 'line': {'color': 'rgba(255,255,255,0.40)', 'width': 2},
@@ -788,11 +788,58 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
 
     fig = go.Figure()
 
-    # ── Barras principais ──────────────────────────────────────────
+    # ── B. Banda de "zona de meta" — faixa verde sutil ±10% ───────
+    fig.add_hrect(
+        y0=ritmo_dia * 0.90,
+        y1=ritmo_dia * 1.10,
+        fillcolor="rgba(16,185,129,0.06)",
+        line_width=0,
+        annotation_text="zona meta ±10%",
+        annotation_position="top right",
+        annotation_font=dict(size=9, color="#10B981", family=_FONT_CHART),
+    )
+
+    # ── A. Linha vertical "HOJE" — separador passado / futuro ─────
+    if dias_uteis_rest:
+        # Linha vertical fina sem annotation embutida (evita overlap com CTG badge)
+        fig.add_shape(
+            type="line",
+            x0=dia_ref - 0.5, x1=dia_ref - 0.5,
+            y0=0, y1=1,
+            xref="x", yref="paper",
+            line=dict(color="#6366F1", width=1.5, dash="dot"),
+        )
+        # Badge "hoje" posicionado na base da linha, lado esquerdo
+        fig.add_annotation(
+            x=dia_ref - 0.5,
+            y=0,
+            yref="paper",
+            text="<b>hoje</b>",
+            showarrow=False,
+            xanchor="right",
+            yanchor="bottom",
+            xshift=-4,
+            font=dict(size=9, color="#6366F1", family=_FONT_CHART),
+            bgcolor="rgba(99,102,241,0.10)",
+            bordercolor="#6366F1",
+            borderwidth=1,
+            borderpad=3,
+        )
+
+    # ── Barras principais — D. cores/opacidades diferenciadas ─────
     cores = []
+    opacities = []
     for d in diario['dia']:
         wd = date(ano, mes, int(d)).weekday()
-        cores.append(_COR_WEEKEND if wd >= 5 else _COR_REALIZADO)
+        if wd >= 5:
+            cores.append(_COR_WEEKEND)
+            opacities.append(0.40)
+        elif int(d) == dia_ref:
+            cores.append("#6366F1")  # hoje — índigo
+            opacities.append(0.95)
+        else:
+            cores.append(_COR_REALIZADO)
+            opacities.append(0.85)
 
     fig.add_trace(go.Bar(
         x=diario['dia'], y=diario['vol_ton'],
@@ -800,10 +847,30 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
         marker=dict(
             color=cores,
             line=dict(color='rgba(0,0,0,0)', width=0),
-            opacity=0.85,
         ),
+        opacity=0.85,
         hovertemplate='<b>Dia %{x}</b><br>Realizado: <b>%{y:,.0f} ton</b><extra></extra>',
     ))
+
+    # ── C. Badge de ritmo acumulado ───────────────────────────────
+    dias_uteis_completos = [d for d in dias_uteis_mes if d < dia_ref]
+    meta_acum_ate_hoje = ritmo_dia * len(dias_uteis_completos)
+    ritmo_pct_badge = (vol_realizado / meta_acum_ate_hoje * 100
+                       if meta_acum_ate_hoje > 0 else 0)
+    cor_badge = ("#10B981" if ritmo_pct_badge >= 90
+                 else ("#F59E0B" if ritmo_pct_badge >= 70 else "#EF4444"))
+    fig.add_annotation(
+        xref="paper", yref="paper",
+        x=0.99, y=0.97,
+        text=f"<b>{ritmo_pct_badge:.0f}%</b> da meta acum.",
+        showarrow=False,
+        font=dict(size=11, color=cor_badge, family=_FONT_CHART),
+        bgcolor="rgba(255,255,255,0.92)",
+        bordercolor=cor_badge,
+        borderwidth=1.5,
+        borderpad=6,
+        align="right",
+    )
 
     # ── Barra de desvio vs meta/dia (apenas dias úteis com dados) ──
     gap_x_pos, gap_y_pos = [], []  # acima da meta → verde
@@ -877,7 +944,7 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
         fig.add_annotation(
             x=dias_uteis_rest[0], y=ctg_dia,
             text=f'<b>{_fmt_ton(ctg_dia)}</b> ton/d',
-            showarrow=False, yshift=16,
+            showarrow=False, yshift=28,
             font=dict(size=10, color=_COR_CTG, family=_FONT_CHART),
             bgcolor='rgba(15,23,42,0.80)',
             bordercolor=_COR_CTG, borderwidth=1, borderpad=4,
@@ -891,15 +958,17 @@ def graf_diario(df_v_mes, meta_mes_vol, ano, mes, dia_ref_externo=None):
 
     layout = _base_layout(
         height=310,
-        margin=dict(t=16, b=44, l=60, r=16),
+        margin=dict(t=16, b=80, l=60, r=16),
         barmode='overlay',
+        legend=dict(orientation='h', yanchor='top', y=-0.22, xanchor='center', x=0.5),
         xaxis=dict(
             title=dict(text='Dia do mês', font=dict(size=11, color=_AXIS_COLOR)),
-            tickmode='linear', dtick=1,
+            tickmode='linear', dtick=2,
             range=[0.5, dias_no_mes + 0.5],
             gridcolor=_GRID_COLOR, gridwidth=1,
             linecolor='#D4DAE8', linewidth=1,
             tickfont=dict(size=10, color=_AXIS_COLOR, family=_FONT_CHART),
+            tickangle=-45,
             showspikes=True, spikecolor='#B0BEC5', spikethickness=1,
         ),
         yaxis=dict(
@@ -977,7 +1046,8 @@ def graf_linhas(df_linha, col_meta, pesos):
         height=390,
         margin=dict(t=20, b=95, l=60, r=16),
         xaxis=dict(
-            tickangle=-38,
+            title='Linha de Produto',
+            tickangle=-45,
             tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
             gridcolor=_GRID_COLOR, linecolor='#D4DAE8',
         ),
@@ -1046,36 +1116,57 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
             cores_real.append(cor_ritmo(r / m if m > 0 else None))
 
     # % realizado/meta sobre cada barra
+    y_max = max((max(real_vals + meta_vals) if real_vals + meta_vals else 1), 1) * 1.40
+
+    def _badge_colors(pct_val):
+        """Retorna (bgcolor, font_color) baseado na performance."""
+        if pct_val >= 0.95:
+            return "rgba(16,185,129,0.12)", "#059669"
+        elif pct_val >= 0.80:
+            return "rgba(245,158,11,0.12)", "#D97706"
+        else:
+            return "rgba(239,68,68,0.12)", "#DC2626"
+
     annotations = []
     for i, s in enumerate(semanas):
         rv = real_vals[i]
         mv = meta_vals[i]
         if s < semana_atual and mv > 0:
-            # Semanas encerradas — mostra % final
+            # Semanas encerradas — badge colorido com % final
             pct = rv / mv
             cor_ann = cor_ritmo(pct)
+            bg_col, fc_col = _badge_colors(pct)
             y_pos = max(rv, mv) * 1.12
+            y_pos = min(y_pos, y_max * 0.92)
             annotations.append(dict(
                 x=nomes[i], y=y_pos,
                 text=f'<b>{pct:.0%}</b>',
                 showarrow=False,
-                font=dict(size=12, color=cor_ann, family='Arial Black'),
+                font=dict(size=12, color=fc_col, family='Arial Black'),
+                bgcolor=bg_col,
+                bordercolor=fc_col,
+                borderwidth=1,
+                borderpad=4,
                 xanchor='center',
             ))
         elif s == semana_atual and mv > 0:
-            # Semana atual — badge "em curso"
+            # Semana atual — badge colorido "em curso"
             pct = rv / mv
             cor_ann = cor_ritmo(pct)
+            bg_col, fc_col = _badge_colors(pct)
             y_pos = max(rv, mv) * 1.12
+            y_pos = min(y_pos, y_max * 0.92)
             annotations.append(dict(
                 x=nomes[i], y=y_pos,
                 text=f'<b>{pct:.0%}</b> ▶',
                 showarrow=False,
-                font=dict(size=12, color=cor_ann, family='Arial Black'),
+                font=dict(size=12, color=fc_col, family='Arial Black'),
+                bgcolor=bg_col,
+                bordercolor=fc_col,
+                borderwidth=1,
+                borderpad=4,
                 xanchor='center',
             ))
-
-    y_max = max((max(real_vals + meta_vals) if real_vals + meta_vals else 1), 1) * 1.40
 
     fig = go.Figure()
 
@@ -1106,6 +1197,38 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
         cliponaxis=False,
     ))
 
+    # ── B. Linha de progresso acumulado (% acum. semana a semana) ────
+    pcts_semanas = []
+    xs_semanas = []
+    real_acum_l = 0
+    meta_acum_l = 0
+    for i, (rv, mv, lbl) in enumerate(zip(real_vals, meta_vals, nomes)):
+        if rv > 0 and mv > 0:
+            real_acum_l += rv
+            meta_acum_l += mv
+            pcts_semanas.append(real_acum_l / meta_acum_l * 100)
+            xs_semanas.append(lbl)
+
+    if pcts_semanas:
+        fig.add_trace(go.Scatter(
+            x=xs_semanas,
+            y=pcts_semanas,
+            name='% Acumulado',
+            mode='lines+markers',
+            yaxis='y2',
+            line=dict(color='#6366F1', width=2, dash='dot'),
+            marker=dict(size=5, color='#6366F1'),
+            hovertemplate='%{x}: <b>%{y:.1f}%</b> acumulado<extra></extra>',
+        ))
+
+        # ── C. Linha de referência em 100% no eixo Y2 ────────────────
+        fig.add_shape(
+            type='line',
+            xref='paper', x0=0, x1=1,
+            yref='y2', y0=100, y1=100,
+            line=dict(color='rgba(99,102,241,0.30)', width=1, dash='dot'),
+        )
+
     # Destaque visual na semana atual — retângulo leve atrás da coluna
     if semana_atual <= len(nomes):
         # Em eixo categórico o índice começa em 0; usamos x0/x1 em torno do índice
@@ -1115,7 +1238,7 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
             xref='x', yref='paper',
             x0=idx_atual - 0.48, x1=idx_atual + 0.48,
             y0=0, y1=1,
-            fillcolor='rgba(27,42,74,0.06)',
+            fillcolor='rgba(217,119,6,0.10)',
             line=dict(color='rgba(27,42,74,0.25)', width=1.5, dash='dot'),
             layer='below',
         )
@@ -1133,7 +1256,7 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
         bargap=0.28,
         bargroupgap=0.06,
         height=330,
-        margin=dict(t=28, b=56, l=60, r=16),
+        margin=dict(t=28, b=56, l=60, r=56),
         annotations=annotations,
         xaxis=dict(
             gridcolor=_GRID_COLOR,
@@ -1145,6 +1268,17 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
             gridcolor=_GRID_COLOR, gridwidth=1,
             range=[0, y_max], tickformat=',',
             tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+        ),
+        yaxis2=dict(
+            title='% Acumulado',
+            overlaying='y',
+            side='right',
+            range=[0, 150],
+            ticksuffix='%',
+            tickfont=dict(size=10, color='#6366F1', family=_FONT_CHART),
+            showgrid=False,
+            zeroline=False,
+            tickformat='.0f',
         ),
         legend=dict(
             orientation='h',
@@ -1160,85 +1294,126 @@ def graf_semanal(df_mes, col_meta, semana_atual, col_meta_label,
 
 # ── Gráfico por família de produto ───────────────────────────────────────────
 def graf_familia_barras(df_sub, familia_nome, fator_proj, chart_key):
-    """Barras agrupadas para linhas de uma família."""
+    """Barras de desempenho por linha dentro de uma família — design premium overlay."""
     if df_sub.empty:
         return
 
-    df_sub = df_sub.sort_values('vol_real', ascending=False)
+    df_sub  = df_sub.sort_values('vol_real', ascending=False)
     linhas  = df_sub['linha'].tolist()
     real    = df_sub['vol_real'].tolist()
     meta_ac = df_sub['meta_acum'].tolist()
     proj    = [r * fator_proj for r in real]
 
-    cores_real = [cor_ritmo(r / m if m > 0 else None)
-                  for r, m in zip(real, meta_ac)]
+    # Performance ratio por linha (0–1+)
+    ratios = [r / m if m > 0 else 0 for r, m in zip(real, meta_ac)]
+    cores_real = [cor_ritmo(rt) for rt in ratios]
 
-    # y_max: ignora a projeção quando ela estica muito o eixo (ex.: INOX com fator_proj alto)
-    # usa o maior entre realizado e meta_acum × 1.35 — mais equilibrado visualmente
     y_max_base = max((max(real + meta_ac) if real else 1), 1)
     y_max_proj = max(proj) if proj else 0
-    # só deixa projeção influenciar se for até 40% acima de y_max_base
-    y_max = y_max_base * 1.35 if y_max_proj < y_max_base * 1.40 else max(y_max_base * 1.35, y_max_proj * 1.10)
+    y_max = y_max_base * 1.42 if y_max_proj < y_max_base * 1.40 \
+            else max(y_max_base * 1.42, y_max_proj * 1.10)
 
     fig = go.Figure()
 
+    # ── 1. Projeção — barra de fundo muito sutil ──────────────────────────────
     fig.add_trace(go.Bar(
         name='Projeção', x=linhas, y=proj,
-        marker_color=COR_PRIMARIA, opacity=0.15,
-        hovertemplate='%{x}<br>Projeção: %{customdata} ton<extra></extra>',
+        marker_color='rgba(59,130,246,0.07)',
+        marker_line=dict(color='rgba(59,130,246,0.18)', width=1),
+        hovertemplate='<b>%{x}</b><br>Projeção: <b>%{customdata}</b> ton<extra></extra>',
         customdata=[_fmt_ton(v) for v in proj],
+        showlegend=True,
     ))
+
+    # ── 2. Meta acumulada — barra de referência ───────────────────────────────
     fig.add_trace(go.Bar(
         name='Meta acum.', x=linhas, y=meta_ac,
-        marker_color=COR_ACENTO, opacity=0.50,
-        hovertemplate='%{x}<br>Meta acum.: %{customdata} ton<extra></extra>',
+        marker_color='#E2E8F0',
+        marker_line=dict(color='#CBD5E1', width=1),
+        hovertemplate='<b>%{x}</b><br>Meta acum.: <b>%{customdata}</b> ton<extra></extra>',
         customdata=[_fmt_ton(v) for v in meta_ac],
     ))
+
+    # ── 3. Realizado — barra principal com cor de performance ─────────────────
+    # Rótulo: volume acima da barra + % da meta embaixo
+    labels_real = [
+        f'<b>{_fmt_ton(r)}</b>'
+        for r in real
+    ]
     fig.add_trace(go.Bar(
         name='Realizado', x=linhas, y=real,
         marker_color=cores_real,
-        marker_line=dict(color='rgba(0,0,0,0.12)', width=1),
-        text=[_fmt_ton(v) for v in real],
+        marker_line=dict(color='rgba(0,0,0,0.08)', width=0.5),
+        text=labels_real,
         textposition='outside',
-        textfont=dict(size=11, color=COR_TEXTO),
+        textfont=dict(size=11, family=_FONT_CHART, color='#374151'),
         cliponaxis=False,
-        hovertemplate='%{x}<br>Realizado: %{customdata} ton<extra></extra>',
-        customdata=[_fmt_ton(v) for v in real],
+        hovertemplate=(
+            '<b>%{x}</b><br>'
+            'Realizado: <b>%{customdata[0]}</b> ton<br>'
+            'Meta: <b>%{customdata[1]}</b> ton<br>'
+            'Performance: <b>%{customdata[2]}</b><extra></extra>'
+        ),
+        customdata=[
+            [_fmt_ton(r), _fmt_ton(m), f'{rt*100:.0f}%']
+            for r, m, rt in zip(real, meta_ac, ratios)
+        ],
     ))
 
-    # Altura: mínimo 260, mais espaço para rótulos externos conforme nº de linhas
-    h = max(260, 220 + len(linhas) * 28)
+    # ── 4. Badge de % da meta dentro/acima de cada barra ─────────────────────
+    for i, (lin, r, m, rt, cor) in enumerate(zip(linhas, real, meta_ac, ratios, cores_real)):
+        pct = rt * 100
+        # Badge colorido acima do volume label
+        fig.add_annotation(
+            x=lin,
+            y=max(r, 0) + y_max * 0.03,
+            text=f'<b>{pct:.0f}%</b>',
+            showarrow=False,
+            yshift=22,
+            font=dict(size=10, color=cor, family=_FONT_CHART),
+            bgcolor=f'rgba(255,255,255,0.0)',
+            borderwidth=0,
+        )
+
+    h = max(300, 240 + len(linhas) * 30)
 
     fig.update_layout(**_base_layout(
         title=dict(
-            text=f'<b>{familia_nome}</b>',
-            font=dict(size=13, color=COR_PRIMARIA, family=_FONT_CHART),
+            text=(
+                f'<b style="font-size:14px;color:{COR_PRIMARIA}">{familia_nome}</b>'
+            ),
+            font=dict(size=14, color=COR_PRIMARIA, family=_FONT_CHART),
             x=0, xanchor='left',
         ),
-        barmode='group',
-        bargap=0.28,
-        bargroupgap=0.06,
+        barmode='overlay',
+        bargap=0.22,
         height=h,
-        margin=dict(t=44, b=64, l=56, r=16),
+        margin=dict(t=48, b=56, l=60, r=20),
         xaxis=dict(
             tickangle=-30,
-            gridcolor=_GRID_COLOR,
-            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
-            linecolor='#D4DAE8',
+            gridcolor='rgba(0,0,0,0)',   # sem grid vertical
+            tickfont=dict(size=11, color='#374151', family=_FONT_CHART),
+            linecolor='#E2E8F0',
         ),
         yaxis=dict(
             title=dict(text='ton', font=dict(size=11, color=_AXIS_COLOR)),
             gridcolor=_GRID_COLOR, gridwidth=1,
-            range=[0, y_max], tickformat=',',
-            tickfont=dict(size=11, color=_AXIS_COLOR, family=_FONT_CHART),
+            range=[0, y_max],
+            tickformat=',.0f',
+            tickfont=dict(size=10, color=_AXIS_COLOR, family=_FONT_CHART),
         ),
         legend=dict(
-            orientation='h', y=1.12, x=1, xanchor='right',
-            font=dict(size=11, family=_FONT_CHART),
-            bgcolor='rgba(255,255,255,0.85)',
+            orientation='h', y=1.10, x=1, xanchor='right',
+            font=dict(size=10, family=_FONT_CHART, color='#64748B'),
+            bgcolor='rgba(255,255,255,0.90)',
             bordercolor='#E4E9F0', borderwidth=1,
         ),
         uniformtext=dict(mode='hide', minsize=8),
+        hoverlabel=dict(
+            bgcolor='#1E293B',
+            font=dict(color='white', size=12, family=_FONT_CHART),
+            bordercolor='#1E293B',
+        ),
     ))
 
     st.plotly_chart(fig, use_container_width=True,
@@ -1592,8 +1767,17 @@ def render_aba(df_f, df_v_raw, pesos, col_meta, label_meta,
         (df_v_raw['ano'] == ano_sel) & (df_v_raw['mes'] == mes_sel)
     ].copy()
 
+    # dia_ref (linha 1353) = último dia com dados → usado para projeção linear.
+    # Para o gráfico diário (CTG / dias restantes) o correto é HOJE, não o último
+    # dia com dados — caso contrário o CTG começa no dia anterior ao atual.
+    _hoje_local = date.today()
+    _dia_ref_grafico = (
+        _hoje_local.day
+        if (_hoje_local.year == ano_sel and _hoje_local.month == mes_sel)
+        else dias_no_mes
+    )
     fig_dia = graf_diario(df_v_mes_filt, total_meta_mes, ano_sel, mes_sel,
-                          dia_ref_externo=dia_ref)
+                          dia_ref_externo=_dia_ref_grafico)
     st.plotly_chart(fig_dia, use_container_width=True,
                     config={'displayModeBar': False},
                     key=f'{col_meta}_diario_{ano_sel}_{mes_sel}')
@@ -2164,21 +2348,21 @@ _filtros_globais = {
     "ufs":      uf_sel,
 }
 
+# ── Aba 3: Prioridade de Contato ───────────────────────────────────────────────
 with aba3:
     score_propensao.render(df_v_raw, _filtros_globais)
 
 # ── Aba 4: Plano Comercial Semanal ─────────────────────────────────────────────
 with aba4:
-    # Recalcula tw_ranges e semana_atual para o período selecionado
     _dia_ref_plano = hoje.day if (hoje.year == ano_sel and hoje.month == mes_sel) else \
                      _cal_mod.monthrange(ano_sel, mes_sel)[1]
     if ano_sel >= 2026:
-        _tw_ranges_plano  = get_month_tw_ranges(ano_sel, mes_sel)
+        _tw_ranges_plano    = get_month_tw_ranges(ano_sel, mes_sel)
         _semana_atual_plano = day_to_semana_tw(ano_sel, mes_sel, _dia_ref_plano) or \
                               len(_tw_ranges_plano)
     else:
-        _tw_ranges_plano  = [(1, 1, 7), (2, 8, 14), (3, 15, 21),
-                             (4, 22, _cal_mod.monthrange(ano_sel, mes_sel)[1])]
+        _tw_ranges_plano    = [(1, 1, 7), (2, 8, 14), (3, 15, 21),
+                               (4, 22, _cal_mod.monthrange(ano_sel, mes_sel)[1])]
         _semana_atual_plano = int(
             pd.cut([_dia_ref_plano], bins=[0, 7, 14, 21, 31], labels=[1, 2, 3, 4])[0]
         )

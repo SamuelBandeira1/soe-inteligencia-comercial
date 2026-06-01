@@ -240,7 +240,7 @@ def _ler_vendas() -> pd.DataFrame:
 
     # ── Garantir colunas de calendário ────────────────────────────────────
     # A base nova já traz ano, mes, semana_mes — apenas garantimos os tipos
-    df["data"] = pd.to_datetime(df["data"])
+    df["data"] = pd.to_datetime(df["data"], format="mixed")
     df["ano"]  = df["ano"].astype(int)
     df["mes"]  = df["mes"].astype(int)
     df["semana_mes"] = df["semana_mes"].astype(int)

@@ -51,10 +51,10 @@ _NOME_UF: dict[str, str] = {
 
 # Escala de cor contínua: vermelho → amarelo → verde
 _COLORSCALE = [
-    [0.000, "#C0392B"],  # 0%
-    [0.625, "#B07D00"],  # 75%
-    [0.750, "#1A7A40"],  # 90%
-    [1.000, "#0D4A28"],  # 120%
+    [0.000, '#C0392B'],   # 0%   — crítico
+    [0.625, '#F59E0B'],   # 75%  — atenção
+    [0.833, '#10B981'],   # 100% — meta
+    [1.000, '#0D4A28'],   # 120%+ — excelente
 ]
 
 
@@ -146,7 +146,11 @@ def _render_mapa(df_uf: pd.DataFrame, col_meta_label: str, chart_key: str) -> No
 
     # Tamanho da bolha: raiz do volume para não deixar SP/MG gigantes
     vol_max = dm["vol_real"].max()
-    dm["bubble_size"] = (dm["vol_real"] / vol_max) ** 0.5 * 40 + 8
+    if not vol_max or vol_max == 0:
+        dm["bubble_size"] = 8.0
+    else:
+        dm["bubble_size"] = (dm["vol_real"] / vol_max) ** 0.5 * 40 + 8
+    dm["bubble_size"] = dm["bubble_size"].fillna(8.0)
 
     hover = [
         (
@@ -158,6 +162,13 @@ def _render_mapa(df_uf: pd.DataFrame, col_meta_label: str, chart_key: str) -> No
             f"{_fmt_ton(abs(r['gap_ton']))} ton"
         )
         for _, r in dm.iterrows()
+    ]
+
+    # Labels de UF: omite texto em bolhas pequenas (< 5% do volume máximo)
+    vol_max_dm = dm['vol_real'].max() if not dm.empty else 1
+    text_uf = [
+        uf if dm.loc[i, 'vol_real'] > vol_max_dm * 0.05 else ''
+        for i, uf in enumerate(dm['uf'])
     ]
 
     fig = go.Figure()
@@ -177,13 +188,13 @@ def _render_mapa(df_uf: pd.DataFrame, col_meta_label: str, chart_key: str) -> No
                 tickformat=".0%",
                 tickfont=dict(size=10),
                 len=0.65,
-                thickness=12,
-                x=1.00,
+                thickness=10,
+                x=0.95,
             ),
             line=dict(color="white", width=1.2),
             opacity=0.92,
         ),
-        text=dm["uf"].tolist(),
+        text=text_uf,
         textfont=dict(size=9, color="white", family="Arial Black"),
         textposition="middle center",
         hovertext=hover,
@@ -212,7 +223,7 @@ def _render_mapa(df_uf: pd.DataFrame, col_meta_label: str, chart_key: str) -> No
 
     fig.update_layout(
         height=560,
-        margin=dict(t=4, b=28, l=4, r=4),
+        margin=dict(t=4, b=28, l=4, r=60),
         paper_bgcolor="rgba(0,0,0,0)",
         geo_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", size=11, color=COR_TEXTO),

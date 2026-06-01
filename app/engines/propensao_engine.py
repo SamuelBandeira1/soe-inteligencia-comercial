@@ -144,6 +144,7 @@ class PropensaoEngine:
         self._data_ref_default: pd.Timestamp | None = (
             pd.Timestamp(data_referencia) if data_referencia else None
         )
+        self._last_scores: pd.DataFrame | None = None
         self._validar_colunas()
         self._preparar_dados()
 
@@ -338,6 +339,37 @@ class PropensaoEngine:
             default="DORMENTE",
         )
 
+        # ── P1-F2: flag_sazon_insuficiente (<104 semanas distintas de histórico) ─
+        # Threshold HC3: 104 semanas = 2 anos de dados semanais.
+        # DISTINTO de flag_indefinido (<3 meses por linha): este gate é por cliente×linha.
+        # Quando True: score_sazonalidade = NaN e score_bruto é recalculado sem o componente.
+        # Lookup vetorizado: cd_cliente ainda não foi renomeado para cliente_id aqui
+        semanas_hist = self._semanas_historico_cliente
+        _key_saz = perfil["cd_cliente"].astype(str) + "||" + perfil["linha"].astype(str)
+        _saz_map  = {f"{k[0]}||{k[1]}": v for k, v in semanas_hist.items()}
+        perfil["flag_sazon_insuficiente"] = _key_saz.map(_saz_map).fillna(0) < 104
+        mask_insuf = perfil["flag_sazon_insuficiente"]
+        # Salva o valor de sazonalidade que foi usado (pode ser fallback 7.5 ou calculado)
+        # e zera esse componente no score_bruto quando insuficiente.
+        saz_usada = perfil["score_sazonalidade"].copy()
+        perfil.loc[mask_insuf, "score_sazonalidade"] = np.nan
+        # Recalcula score_bruto: subtrai a sazonalidade que estava embutida
+        perfil.loc[mask_insuf, "score_bruto"] = (
+            perfil.loc[mask_insuf, "score_bruto"] - saz_usada[mask_insuf]
+        ).clip(0, 100)
+        # Recalcula score_propensao para os afetados (aplica mesma penalidade de recência)
+        _dias_insuf = dias[mask_insuf].to_numpy(dtype=np.float64)
+        _sb_insuf   = perfil.loc[mask_insuf, "score_bruto"].to_numpy(dtype=np.float64)
+        perfil.loc[mask_insuf, "score_propensao"] = pd.Series(
+            np.select(
+                [_dias_insuf <= 7, _dias_insuf <= 30, _dias_insuf <= 100, _dias_insuf <= 180],
+                [_sb_insuf * PEN_7D, _sb_insuf * PEN_30D, _sb_insuf, _sb_insuf * PEN_ESF],
+                default=_sb_insuf * PEN_INA,
+            ),
+            index=perfil.index[mask_insuf],
+            dtype=np.float64,
+        ).clip(0, 100).round(1)
+
         # ── Flag NOVO: cliente que não tinha histórico na linha antes de 90d ──
         # "Novo" = nunca apareceu nesta linha antes dos últimos 90 dias
         corte_90d   = ref - pd.DateOffset(days=90)
@@ -397,6 +429,28 @@ class PropensaoEngine:
         else:
             perfil["telefone"] = ""
 
+        if "vendedor" in df_raw.columns:
+            lookup_vend = (
+                df_raw[df_raw["cd_cliente"].astype(str).isin(clientes_perfil)]
+                .sort_values("data")
+                .groupby("cd_cliente")["vendedor"]
+                .last()
+            )
+            perfil["vendedor"] = perfil["cd_cliente"].astype(str).map(lookup_vend).fillna("")
+        else:
+            perfil["vendedor"] = ""
+
+        if "gerencia" in df_raw.columns:
+            lookup_ger = (
+                df_raw[df_raw["cd_cliente"].astype(str).isin(clientes_perfil)]
+                .sort_values("data")
+                .groupby("cd_cliente")["gerencia"]
+                .last()
+            )
+            perfil["gerencia"] = perfil["cd_cliente"].astype(str).map(lookup_ger).fillna("")
+        else:
+            perfil["gerencia"] = ""
+
         perfil = perfil.rename(columns={"cd_cliente": "cliente_id"})
         perfil["cliente_nome"] = perfil["_nome"].fillna(perfil["cliente_id"])
         perfil = perfil.drop(columns=["_nome"])
@@ -407,19 +461,58 @@ class PropensaoEngine:
         cols = [
             "cliente_id", "cliente_nome", "linha", "regiao", "uf",
             "score_propensao", "score_bruto", "tier",
-            "flag_novo", "flag_indefinido",
+            "flag_novo", "flag_indefinido", "flag_sazon_insuficiente",
             "ultima_compra", "dias_sem_comprar",
             "volume_medio_mensal", "frequencia_compras",
             "score_recencia", "score_frequencia", "score_sazonalidade",
             "score_volume", "score_tendencia",
             "motivo_score", "fornecedor_principal",
-            "telefone", "email",
+            "telefone", "email", "vendedor", "gerencia",
         ]
-        return (
+        out = (
             perfil[[c for c in cols if c in perfil.columns]]
             .sort_values("score_propensao", ascending=False)
             .reset_index(drop=True)
         )
+        self._last_scores = out
+        return out
+
+    # ── P1-F3: decomposição de score para um único cliente×linha ─────────────
+
+    def get_decomposition(self, cliente_id: str, linha: str) -> dict | None:
+        """
+        Retorna dict com os 5 componentes de score + flags para o cliente×linha.
+        Lookup no último DataFrame calculado por calcular_scores().
+        Retorna None se calcular_scores() ainda não foi chamado ou cliente não encontrado.
+        """
+        if self._last_scores is None or self._last_scores.empty:
+            return None
+        mask = (
+            (self._last_scores["cliente_id"].astype(str) == str(cliente_id)) &
+            (self._last_scores["linha"].astype(str) == str(linha))
+        )
+        rows = self._last_scores[mask]
+        if rows.empty:
+            return None
+        r = rows.iloc[0]
+        componentes = [
+            "score_recencia", "score_frequencia", "score_sazonalidade",
+            "score_volume", "score_tendencia",
+        ]
+        flags = ["flag_novo", "flag_indefinido", "flag_sazon_insuficiente"]
+        result: dict = {
+            "cliente_id": str(cliente_id),
+            "linha": str(linha),
+            "score_propensao": float(r.get("score_propensao", 0)),
+            "score_bruto": float(r.get("score_bruto", 0)),
+        }
+        for c in componentes:
+            v = r.get(c)
+            result[c] = None if pd.isna(v) else float(v)
+        for f in flags:
+            if f in r.index:
+                result[f] = bool(r[f])
+        return result
 
     # ── Componentes individuais (mantidos para testes unitários) ─────────────
 
@@ -452,6 +545,12 @@ class PropensaoEngine:
         df["data"] = pd.to_datetime(df["data"])
         df["mes"]  = df["data"].dt.month
         df["ano"]  = df["data"].dt.year
+
+        # semana_mes para o mapeamento de histórico semanal (P1-F2)
+        if "semana_mes" not in df.columns:
+            df["semana_mes"] = df["data"].dt.day.apply(
+                lambda d: 1 if d <= 7 else 2 if d <= 14 else 3 if d <= 21 else 4
+            )
 
         # Sazonalidade por LINHA: {linha: {mes: score_0_15}}
         # Peso 15 (era 25) — calibrado para não inflar scores de itens sazonais
@@ -518,13 +617,35 @@ class PropensaoEngine:
             self._volume_p75      = self._vol_median_linha.copy()
             self._freq_p90_linha  = self._freq_mean_linha.copy()
 
+            # P1-F2: semanas distintas (ano_mes, semana_mes) por (cd_cliente, linha)
+            # Usa histórico completo (não windowed) — mede profundidade total de dados.
+            # Limitação conhecida: para backtest (data_referencia passada), o count
+            # inclui dados após a data de referência, inflando levemente o total.
+            # Aceitável para produção; Task 4.1 (backtest) pode windowed aqui se necessário.
+            df_sem = df.copy()
+            df_sem["ano_mes_sem_key"] = (
+                df_sem["data"].dt.to_period("M").astype(str)
+                + "_" + df_sem["semana_mes"].astype(str)
+            )
+            sem_hist = (
+                df_sem.groupby(["cd_cliente", "linha"])["ano_mes_sem_key"]
+                .nunique()
+                .reset_index()
+                .rename(columns={"ano_mes_sem_key": "n_semanas"})
+            )
+            self._semanas_historico_cliente: dict[tuple[str, str], int] = {
+                (str(r["cd_cliente"]), str(r["linha"])): int(r["n_semanas"])
+                for _, r in sem_hist.iterrows()
+            }
+
         else:
-            self._freq_mean_linha        = {"_all": 0.25}
-            self._freq_p90_linha         = {"_all": 0.25}
-            self._vol_median_linha       = {"_all": 1.0}
-            self._vol_p75_ativos         = {"_all": 1.0}
-            self._volume_p75             = {}
-            self._meses_historico_linha  = {}
+            self._freq_mean_linha             = {"_all": 0.25}
+            self._freq_p90_linha              = {"_all": 0.25}
+            self._vol_median_linha            = {"_all": 1.0}
+            self._vol_p75_ativos              = {"_all": 1.0}
+            self._volume_p75                  = {}
+            self._meses_historico_linha       = {}
+            self._semanas_historico_cliente   = {}
 
     def _gerar_motivos_vetorizado(self, perfil: pd.DataFrame) -> pd.Series:
         """Gera coluna de motivos sem apply — usa np.select por categoria."""

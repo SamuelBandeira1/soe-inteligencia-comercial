@@ -55,9 +55,10 @@ from utils.visual import (
 
 # ── Constantes operacionais ───────────────────────────────────────────────────
 N_HORIZON          = 10
-IDX_ZONE_FROZEN    = 2   # semanas 0-1  (atual + TW+1)
-IDX_ZONE_LIQUID    = 5   # semanas 2-4  (TW+2 a TW+4)
-# semanas 5-9 = Zona Fluida
+N_PASSADO          = 4   # semanas históricas exibidas antes da semana atual
+IDX_ZONE_FROZEN    = N_PASSADO + 2   # limite frozen: atual + TW+1 (índices N_PASSADO..N_PASSADO+1)
+IDX_ZONE_LIQUID    = N_PASSADO + 5   # limite liquid: TW+2 a TW+4
+# índices 0..N_PASSADO-1 = passado | N_PASSADO..IDX_ZONE_FROZEN-1 = Frozen | IDX_ZONE_FROZEN..IDX_ZONE_LIQUID-1 = Liquid | IDX_ZONE_LIQUID.. = Fluid
 
 THRESHOLD_DESVIO   = 0.20   # 20% → alerta de gap
 N_HIST_SEMANAS     = 6      # últimas N ocorrências do mesmo semana_mes para média
@@ -79,24 +80,52 @@ _COR_FLUID  = "rgba(91, 107, 144, 0.04)"   # azul acinzentado suave
 # CALENDÁRIO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _horizonte_semanas(ano_ini: int, mes_ini: int, sem_ini: int, n: int = N_HORIZON) -> list[dict]:
-    result = []
-    ano, mes, sem = ano_ini, mes_ini, sem_ini
-    for _ in range(n):
-        tw_m  = get_month_tw_ranges(ano, mes)
-        n_sem = len(tw_m)
+def _semana_anterior(ano: int, mes: int, sem: int) -> tuple[int, int, int]:
+    if sem > 1:
+        return ano, mes, sem - 1
+    if mes == 1:
+        ano, mes = ano - 1, 12
+    else:
+        mes -= 1
+    n_sem = len(get_month_tw_ranges(ano, mes))
+    return ano, mes, n_sem
+
+
+def _horizonte_semanas(
+    ano_ini: int, mes_ini: int, sem_ini: int,
+    n: int = N_HORIZON, n_passado: int = N_PASSADO,
+) -> list[dict]:
+    def _build_entry(ano, mes, sem):
+        tw_m = get_month_tw_ranges(ano, mes)
         try:
-            partes   = tw_label(ano, mes, sem).split()
+            partes = tw_label(ano, mes, sem).split()
             lbl_curto = f"{partes[0]}\n{partes[-1].split('/')[0]}"
         except Exception:
             lbl_curto = f"S{sem}\n{_MESES_ABR.get(mes, '')}"
         dias = next(((di, df_) for s, di, df_ in tw_m if s == sem), (1, 28))
-        result.append({
+        return {
             "ano": ano, "mes": mes, "semana_mes": sem,
             "label":      lbl_curto,
-            "label_full": f"Semana {sem} — {_MESES_ABR.get(mes,'')} {ano} ({dias[0]}–{dias[1]})",
+            "label_full": f"Semana {sem} — {_MESES_ABR.get(mes,'')}"
+                          f" {ano} ({dias[0]}–{dias[1]})",
             "dia_ini": dias[0], "dia_fim": dias[1],
-        })
+        }
+
+    # Semanas passadas (n_passado semanas antes da semana atual)
+    past_coords: list[tuple[int, int, int]] = []
+    a, m, s = ano_ini, mes_ini, sem_ini
+    for _ in range(n_passado):
+        a, m, s = _semana_anterior(a, m, s)
+        past_coords.insert(0, (a, m, s))
+
+    result = [_build_entry(a, m, s) for a, m, s in past_coords]
+
+    # Semanas futuras (N_HORIZON semanas a partir da semana atual)
+    ano, mes, sem = ano_ini, mes_ini, sem_ini
+    for _ in range(n):
+        result.append(_build_entry(ano, mes, sem))
+        tw_m = get_month_tw_ranges(ano, mes)
+        n_sem = len(tw_m)
         if sem < n_sem:
             sem += 1
         else:
@@ -118,7 +147,8 @@ def _is_future(w, ano_r, mes_r, sem_r):
     return (w["ano"], w["mes"], w["semana_mes"]) > (ano_r, mes_r, sem_r)
 
 def _zone(idx: int) -> str:
-    """Retorna 'frozen' | 'liquid' | 'fluid' pelo índice no horizonte."""
+    """Retorna 'past' | 'frozen' | 'liquid' | 'fluid' pelo índice no horizonte."""
+    if idx < N_PASSADO:         return "past"
     if idx < IDX_ZONE_FROZEN:   return "frozen"
     if idx < IDX_ZONE_LIQUID:   return "liquid"
     return "fluid"
@@ -185,7 +215,7 @@ def _calc_desvios(df_f: pd.DataFrame, horizonte: list[dict]) -> list[dict]:
 
     alertas = []
 
-    for idx, w in enumerate(horizonte[:IDX_ZONE_LIQUID]):
+    for idx, w in enumerate(horizonte[N_PASSADO:IDX_ZONE_LIQUID], start=N_PASSADO):
         sem_k = w["semana_mes"]
 
         # Meta S&OE desta semana por linha
@@ -414,12 +444,23 @@ def _graf_horizonte(
     # No Plotly com eixo categórico, x0/x1 são os valores das categorias em si
     # Para posicionar entre barras, usamos coordenadas numéricas relativas
     n_total = len(horizonte)
+    past_end   = N_PASSADO - 0.5
     frozen_end = IDX_ZONE_FROZEN - 0.5
     liquid_end = IDX_ZONE_LIQUID - 0.5
 
-    # Zona Congelada: índices 0 até IDX_ZONE_FROZEN-1
+    # Zona Passado: semanas históricas exibidas
+    if N_PASSADO > 0:
+        fig.add_vrect(
+            x0=-0.5, x1=past_end,
+            fillcolor="rgba(200,200,200,0.10)", line_width=0, layer="below",
+            annotation_text="◀ Histórico",
+            annotation_position="top left",
+            annotation_font=dict(size=10, color="#78909C"),
+            annotation_bgcolor="rgba(255,255,255,0.85)",
+        )
+    # Zona Congelada: atual + TW+1
     fig.add_vrect(
-        x0=-0.5, x1=frozen_end,
+        x0=past_end, x1=frozen_end,
         fillcolor=_COR_FROZEN, line_width=0, layer="below",
         annotation_text="🔒 Congelada",
         annotation_position="top left",
@@ -912,19 +953,6 @@ def _render_detalhes_semana(
     st.markdown('<div class="secao-titulo">📦 Volumes por Linha</div>', unsafe_allow_html=True)
     _render_barras_linha(agg_aj, is_fut, is_past, status_cor)
 
-    st.markdown("---")
-
-    # Clientes + Matriz
-    st.markdown('<div class="secao-titulo">🎯 Inteligência de Clientes</div>', unsafe_allow_html=True)
-    _render_clientes_e_matriz(
-        df_v_raw=df_v_raw,
-        filtros=filtros,
-        gerencia_sel=gerencia_sel,
-        semana_mes=w["semana_mes"],
-        agg_linhas=agg,
-        key_suffix=f"{w['ano']}_{w['mes']}_{w['semana_mes']}_{gerencia_sel}",
-        w=w,
-    )
 
 
 def _render_alertas_simples(agg: pd.DataFrame, is_future: bool) -> None:
@@ -1003,7 +1031,8 @@ def _render_barras_linha(agg, is_future, is_past, cor_destaque):
 
 
 def _render_clientes_e_matriz(
-    df_v_raw, filtros, gerencia_sel, semana_mes, agg_linhas, key_suffix, w: dict | None = None,
+    df_v_raw, filtros, gerencia_sel, semana_mes, agg_linhas, key_suffix,
+    w: dict | None = None, _linha_preset: str | None = None,
 ) -> None:
     from datetime import date as _date
 
@@ -1074,12 +1103,16 @@ def _render_clientes_e_matriz(
         st.info("Nenhum cliente ativo nas linhas planejadas.")
         return
 
-    # Filtros rápidos
+    # Filtros rápidos — se _linha_preset fornecido, pré-seleciona a linha
+    _ck_linha = f"cf_l_{key_suffix}"
+    if _linha_preset and st.session_state.get(_ck_linha, "Todas") == "Todas":
+        st.session_state[_ck_linha] = _linha_preset
+
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 1.5, 1])
     linhas_d = sorted(df_sc["linha"].dropna().unique().tolist())
     ufs_d    = sorted(df_sc["uf"].dropna().unique().tolist())
     with col_f1:
-        l_f = st.selectbox("Linha", ["Todas"]+linhas_d, key=f"cf_l_{key_suffix}")
+        l_f = st.selectbox("Linha", ["Todas"]+linhas_d, key=_ck_linha)
     with col_f2:
         u_f = st.selectbox("UF", ["Todas"]+ufs_d, key=f"cf_u_{key_suffix}")
     with col_f3:
@@ -1365,7 +1398,7 @@ def render(
 
     # ── Semana selecionada (session_state) ────────────────────────────────────
     if "plano_sem_idx" not in st.session_state:
-        st.session_state["plano_sem_idx"] = 0
+        st.session_state["plano_sem_idx"] = N_PASSADO  # default: semana atual
 
     # Sincroniza com o radio ANTES de desenhar o gráfico.
     # O Streamlit grava o valor do widget em st.session_state[key] ANTES de
@@ -1378,7 +1411,7 @@ def render(
             st.session_state["plano_sem_idx"] = _rv
 
     # ── M1: Gráfico com zonas ─────────────────────────────────────────────────
-    st.markdown('<div class="secao-titulo">📈 Horizonte S&OE — Próximas 10 Semanas</div>',
+    st.markdown('<div class="secao-titulo">📈 Horizonte S&OE — 4 semanas anteriores + 10 à frente</div>',
                 unsafe_allow_html=True)
     _legenda_zonas()
 
@@ -1435,6 +1468,8 @@ def render(
         ano_ref=ano_sel,
         mes_ref=mes_sel,
         sem_ref=semana_atual,
+        filtros=filtros,
+        gerencia_sel=ger_sel,
     )
 
     # ── Painel de detalhes ────────────────────────────────────────────────────
@@ -2064,6 +2099,8 @@ def _render_familia_explorer(
     ano_ref: int,
     mes_ref: int,
     sem_ref: int,
+    filtros: dict | None = None,
+    gerencia_sel: str = "Todas",
 ) -> None:
     """
     Seção interativa: selecione uma família → grid 2 colunas com cartão por linha.
@@ -2154,16 +2191,22 @@ def _render_familia_explorer(
         unsafe_allow_html=True,
     )
 
+    _SK_CLI = "plano_cli_open"
+
     for idx_l in range(0, len(linhas_s), 2):
-        par           = linhas_s[idx_l: idx_l + 2]
-        col_a, col_b  = st.columns(2, gap="small")
-        card_cols     = [col_a, col_b]
+        par          = linhas_s[idx_l: idx_l + 2]
+        col_a, col_b = st.columns(2, gap="small")
+        card_cols    = [col_a, col_b]
+
+        linha_aberta: str | None = None
 
         for j, linha in enumerate(par):
             df_l      = df_sem[df_sem["linha"] == linha]
             meta_soe_ = float(df_l["meta_soe"].sum())
             meta_sop_ = float(df_l["meta_sop"].sum()) if "meta_sop" in df_l.columns else 0.0
             real_l    = float(df_l["vol_ton"].sum())
+            _cli_key  = f"{_SK_CLI}_{linha}_{semana_mes_sel}"
+            _is_open  = st.session_state.get(_cli_key, False)
 
             with card_cols[j]:
                 st.plotly_chart(
@@ -2184,6 +2227,42 @@ def _render_familia_explorer(
                         f"_s{semana_mes_sel}_{idx_l}_{j}"
                     ),
                 )
+                _btn_label = f"{'▲ Fechar' if _is_open else '👥 Clientes Potenciais'} — {linha}"
+                if st.button(
+                    _btn_label,
+                    key=f"btn_cli_{_cli_key}",
+                    type="primary" if _is_open else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state[_cli_key] = not _is_open
+                    st.rerun()
+
+            if _is_open:
+                linha_aberta = linha
+
+        # Painel inline em largura total — aparece abaixo do par de cards
+        if linha_aberta:
+            st.markdown(
+                f'<div style="background:#F8FAFC;border-left:4px solid {cor_fam};'
+                f'border-radius:0 8px 8px 0;padding:12px 18px 4px;margin:4px 0 12px 0;">'
+                f'<span style="font-size:13px;font-weight:700;color:{cor_fam};">'
+                f'👥 Clientes Potenciais — {linha_aberta}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            _render_clientes_e_matriz(
+                df_v_raw=df_v_raw,
+                filtros=filtros or {},
+                gerencia_sel=gerencia_sel,
+                semana_mes=semana_mes_sel,
+                agg_linhas=df_sem[df_sem["linha"] == linha_aberta]
+                           .groupby("linha")
+                           .agg(meta=("meta_soe", "sum"), real=("vol_ton", "sum"))
+                           .reset_index(),
+                key_suffix=f"fam_{linha_aberta.replace(' ','_')}_{semana_mes_sel}",
+                w=w_sel,
+                _linha_preset=linha_aberta,
+            )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2191,6 +2270,8 @@ def _render_familia_explorer(
 def _legenda_zonas() -> None:
     st.markdown(
         '<div style="font-size:12px;color:#8A9BB0;margin-bottom:8px;">'
+        '<span style="color:#78909C;font-weight:700;">◀ Histórico</span> '
+        '4 semanas anteriores — contexto de ritmo &nbsp;·&nbsp; '
         '<span style="color:#C0392B;font-weight:700;">🔒 Zona Congelada</span> '
         'TW atual + TW+1 — execução agressiva da carteira &nbsp;·&nbsp; '
         '<span style="color:#1A7A40;font-weight:700;">🔄 Zona Líquida</span> '

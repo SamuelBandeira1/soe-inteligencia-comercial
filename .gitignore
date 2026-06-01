@@ -38,6 +38,20 @@ desktop.ini
 *.tmp.*
 relatorio_qualidade.txt
 
+# Node (gerado por docx skill — nunca versionar)
+node_modules/
+docs/node_modules/
+docs/package.json
+docs/package-lock.json
+docs/gera_diagnostico.js
+
+# Arquivos de teste/golden (gerados localmente)
+tests/_golden_sims_*.npy
+
 # Pastas de skills e agentes (repositórios git embutidos)
 .addy-skills/
 .agents/
+.memory/
+opencode.json
+.ignore
+.claude/

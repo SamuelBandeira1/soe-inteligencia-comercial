@@ -108,6 +108,50 @@ def _carregar(path: Path, nome: str) -> pd.DataFrame:
     return df
 
 
+def _mes_do_arquivo(path: Path) -> tuple[int, int] | None:
+    """Extrai (ano, mes) do nome vendas_soe_mes_YYYY-MM.csv. None se nao casar."""
+    try:
+        ym = path.stem.split("vendas_soe_mes_")[1]
+        ano, mes = ym.split("-")
+        ano, mes = int(ano), int(mes)
+        return (ano, mes) if 1 <= mes <= 12 else None
+    except (IndexError, ValueError):
+        return None
+
+
+def _resolver_mes_automatico() -> tuple[int, int, str] | None:
+    """
+    Decide o mes alvo quando nenhum --mes foi passado.
+
+    Regra: usa o mes corrente se houver arquivo dele. Caso contrario (ex.: virou
+    o mes mas ainda estamos fechando o anterior), usa o arquivo mensal
+    'vendas_soe_mes_*.csv' modificado mais recentemente -- ou seja, o que voce
+    acabou de atualizar. Retorna None se nao houver nenhum arquivo mensal.
+    """
+    hoje = date.today()
+    atual = RAW_DIR / f"vendas_soe_mes_{hoje.year}-{hoje.month:02d}.csv"
+    if atual.exists():
+        return hoje.year, hoje.month, (
+            f"  [auto] Usando o mes corrente: {hoje.year}-{hoje.month:02d}"
+        )
+
+    candidatos = sorted(
+        RAW_DIR.glob("vendas_soe_mes_*.csv"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for p in candidatos:
+        ym = _mes_do_arquivo(p)
+        if ym:
+            ano, mes = ym
+            return ano, mes, (
+                f"  [auto] Mes corrente ({hoje.year}-{hoje.month:02d}) nao tem arquivo.\n"
+                f"  [auto] Usando o arquivo mensal mais recente modificado:\n"
+                f"         {p.name}  ->  alvo {ano}-{mes:02d}"
+            )
+    return None
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main(mes_str: str | None = None, dry_run: bool = False) -> None:
@@ -124,9 +168,14 @@ def main(mes_str: str | None = None, dry_run: bool = False) -> None:
             _log(f"[ERRO] Mes invalido: '{mes_str}' -- use formato YYYY-MM")
             sys.exit(1)
     else:
-        hoje = date.today()
-        ano_alvo = hoje.year
-        mes_alvo = hoje.month
+        resolvido = _resolver_mes_automatico()
+        if resolvido is None:
+            hoje = date.today()
+            ano_alvo = hoje.year
+            mes_alvo = hoje.month
+        else:
+            ano_alvo, mes_alvo, motivo = resolvido
+            _log(motivo)
 
     mes_fmt = f"{ano_alvo}-{mes_alvo:02d}"
     arquivo_mensal = RAW_DIR / f"vendas_soe_mes_{mes_fmt}.csv"

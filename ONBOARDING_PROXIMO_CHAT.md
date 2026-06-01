@@ -51,6 +51,19 @@ Leia os seguintes arquivos antes de iniciar qualquer trabalho:
 AGENTS.md                                    ← entrypoint do framework de agentes
 ```
 
+### Cérebro Visual do Projeto (Obsidian)
+
+O vault Obsidian em `D:\brain_organizer\brain_organizer\SOE\` é o painel de controle visual do projeto. Leia os seguintes arquivos do vault para contexto adicional:
+
+```
+D:\brain_organizer\brain_organizer\SOE\SOE - Inteligência Comercial.md   ← nota-raiz, estado atual
+D:\brain_organizer\brain_organizer\SOE\Roadmap.md                        ← próximos passos e dívida técnica
+D:\brain_organizer\brain_organizer\SOE\Sessões SOE.md                    ← índice de sessões + pendências urgentes
+D:\brain_organizer\brain_organizer\SOE\UI-UX Design Kit\Aplicação no Streamlit.md  ← design system ativo
+```
+
+> Ao fim de cada sessão: execute `scripts\sync_vault.py` para sincronizar o vault com o estado atual do `.memory/`.
+
 ---
 
 ## Personas Disponíveis (`.agents/personas/`)
@@ -80,7 +93,16 @@ AGENTS.md                                    ← entrypoint do framework de agen
 
 ---
 
-## Estado Atual do Projeto (2026-05-28)
+## UI-UX Design Kit (aplicado no Streamlit)
+
+Para qualquer trabalho de design em gráficos ou cards, leia primeiro:
+`D:\brain_organizer\brain_organizer\SOE\UI-UX Design Kit\Aplicação no Streamlit.md`
+
+Contém: paleta `CORES`, funções `kpi_card()`, `inject_typography()`, `inject_animations()`, padrões Plotly por aba e checklist de design.
+
+---
+
+## Estado Atual do Projeto (2026-05-30)
 
 ### Demand Sensing (`app/modules/demand_sensing.py`)
 - ✅ Monte Carlo retroativo implementado: `_monte_carlo_retroativo()` — últimas **12 semanas** históricas
@@ -90,20 +112,29 @@ AGENTS.md                                    ← entrypoint do framework de agen
 - Constantes: `N_SIM=1000`, `N_PACE=8`, `N_FUTURO=8`, `N_HIST=16`
 
 ### Assertividade (`app/modules/assertividade_plano.py`)
-- ✅ KPIs reestruturados em grade `st.columns(4, gap="small")`:
-  - Card 1: Assertividade S&OP % (aderência ±10%)
-  - Card 2: Assertividade S&OE %
-  - Card 3: GAP Calibração S&OP (ton)
-  - Card 4: GAP Calibração S&OE (ton)
-- ✅ Filtros com CSS scroll interno (tags visíveis, não colapsadas)
-- ✅ Tabela: colunas agrupadas Real | S&OP | S&OE, inteiros `Int64`, `Calib. (t/sem)` ignora semanas zeradas
-- ✅ Gráficos Pareto e Desvio por Linha: margens dinâmicas, `tickangle=-45`, `automargin=True`
-- ✅ `_secao()` padronizada com linha divisória flex + subtítulo descritivo
+- ✅ Fórmula contínua: `_assertividade()` = 1−MAPE (Σ|R−P|/Σbase), não mais binária ±10%
+- ✅ `_GRP_PLANO` + `_agrupar_nivel_plano()` — cálculo no menor nível, sem cancelamento de erros
+- ✅ KPIs em grade `st.columns(4)`: Assertividade S&OP% | S&OE% | GAP S&OP(t) | GAP S&OE(t)
+- ✅ Tabela: colunas agrupadas Real | S&OP | S&OE, inteiros `Int64`
+- ⚠️ **Página não testada após correção granular de 29/05** — rodar `ATUALIZAR_E_RODAR.bat` primeiro
+
+### Dívida Técnica Pendente (`assertividade_plano.py`)
+- `_wmape()` linha 116 — dead code
+- `_TH_WMAPE` linha 40 — constante órfã
+- `_GLOSSARIO["WMAPE"/"Aderência"]` — nomenclatura antiga
+- `_assertividade_semana()` — dead code após correção granular
 
 ### Deploy
 - `ATUALIZAR_E_RODAR.bat` → incrementa dados → gera parquets → abre dashboard
 - `FAZER_PUSH.bat` → push código para GitHub + HF Spaces (force)
 - `SUBIR_DADOS_GDRIVE.bat` → abre pasta `data/processed/` para upload manual ao Drive
+
+### Roadmap (PRIORIDADE ALTA)
+- Variáveis exógenas no Demand Sensing (solicitado por Humberto, gerente)
+  - Input de variáveis exógenas (CSV/widget)
+  - Incorporação no Monte Carlo por cenário
+  - Variáveis-proxy públicas: IPCA, PMC IBGE, preço do minério, câmbio BRL/USD
+  - Modo "e se": simular choque exógeno na faixa de confiança
 
 ---
 

@@ -185,3 +185,67 @@ class TestCalcularScores:
             assert score_medio_desativado < score_medio_ativo, (
                 f"Desativados ({score_medio_desativado:.1f}) devem ter score menor que ativos ({score_medio_ativo:.1f})"
             )
+
+
+
+# ── P1-F2: flag_sazon_insuficiente ────────────────────────────────────────────
+
+def _make_df_semanas(n_semanas_distintas: int) -> pd.DataFrame:
+    """Cria DataFrame com exatamente n_semanas_distintas semanas únicas (ano_mes x semana_mes)."""
+    import numpy as np
+    from datetime import date, timedelta
+    rows = []
+    base = date(2020, 1, 1)
+    semanas_geradas = 0
+    dia = 0
+    while semanas_geradas < n_semanas_distintas:
+        d = base + timedelta(days=dia * 7)
+        rows.append({
+            "cd_cliente": "CLI_SAZ",
+            "linha": "CA-50",
+            "regiao": "NORDESTE",
+            "uf": "CE",
+            "data": d,
+            "vol_ton": 10.0,
+            "val_mm": 0.5,
+        })
+        semanas_geradas += 1
+        dia += 1
+    return pd.DataFrame(rows)
+
+
+class TestFlagSazonInsuficiente:
+    def test_acima_de_104_flag_false(self):
+        """130 semanas distintas (120 pares distintos > 104) → flag=False, score preenchido."""
+        df = _make_df_semanas(130)
+        eng = PropensaoEngine(df)
+        scores = eng.calcular_scores()
+        row = scores[scores["cliente_id"] == "CLI_SAZ"].iloc[0]
+        assert row["flag_sazon_insuficiente"] == False
+        assert not __import__("pandas").isna(row["score_sazonalidade"])
+
+    def test_abaixo_de_104_flag_true_sazon_nan(self):
+        """50 semanas distintas → flag_sazon_insuficiente=True e score_sazonalidade=NaN."""
+        df = _make_df_semanas(50)
+        eng = PropensaoEngine(df)
+        scores = eng.calcular_scores()
+        row = scores[scores["cliente_id"] == "CLI_SAZ"].iloc[0]
+        assert row["flag_sazon_insuficiente"] == True
+        assert __import__("pandas").isna(row["score_sazonalidade"])
+
+    def test_flag_independente_de_flag_indefinido(self):
+        """flag_sazon_insuficiente e flag_indefinido são colunas distintas no output."""
+        df = _make_df_semanas(50)
+        eng = PropensaoEngine(df)
+        scores = eng.calcular_scores()
+        assert "flag_sazon_insuficiente" in scores.columns
+        assert "flag_indefinido" in scores.columns
+
+    def test_get_decomposition_retorna_none_sazon_quando_insuficiente(self):
+        """get_decomposition retorna sazonalidade=None quando flag_sazon_insuficiente=True."""
+        df = _make_df_semanas(50)
+        eng = PropensaoEngine(df)
+        eng.calcular_scores()
+        decomp = eng.get_decomposition("CLI_SAZ", "CA-50")
+        assert decomp is not None
+        assert decomp.get("sazonalidade") is None

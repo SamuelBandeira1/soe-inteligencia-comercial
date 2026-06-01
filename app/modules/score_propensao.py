@@ -496,6 +496,83 @@ def _render_tabela(df_scores: pd.DataFrame, total_populacao: int) -> None:
     )
 
 
+# ── Gerador de e-mail para coordenadores ─────────────────────────────────────
+def _gerar_email_coordenadores(df_scores: pd.DataFrame) -> str:
+    hoje = date.today().strftime("%d/%m/%Y")
+    linhas: list[str] = []
+
+    gerencias = sorted(df_scores["gerencia"].dropna().unique()) if "gerencia" in df_scores.columns else [""]
+
+    for ger in gerencias:
+        if ger:
+            df_ger = df_scores[df_scores["gerencia"] == ger]
+        else:
+            df_ger = df_scores
+
+        if df_ger.empty:
+            continue
+
+        linhas.append("=" * 60)
+        linhas.append(f"E-MAIL PARA: Coordenador(a) — {ger or 'Geral'}")
+        linhas.append(f"Data: {hoje}")
+        linhas.append("=" * 60)
+        linhas.append("")
+        linhas.append("Prezado(a) Coordenador(a),")
+        linhas.append("")
+        linhas.append(
+            "Segue a lista de clientes prioritários para contato esta semana, "
+            "separados por vendedor. Os clientes estão ordenados por índice de "
+            "prioridade (maior = mais urgente)."
+        )
+        linhas.append("")
+
+        vendedores = (
+            df_ger.groupby("vendedor")["score_propensao"].max()
+            .sort_values(ascending=False)
+            .index.tolist()
+            if "vendedor" in df_ger.columns
+            else [""]
+        )
+
+        for vend in vendedores:
+            df_v = df_ger[df_ger["vendedor"] == vend] if vend else df_ger
+            df_v = df_v.sort_values("score_propensao", ascending=False)
+            if df_v.empty:
+                continue
+
+            linhas.append("─" * 60)
+            linhas.append(f"VENDEDOR: {vend or 'Sem vendedor'}")
+            linhas.append("─" * 60)
+            linhas.append("")
+
+            for rank, (_, row) in enumerate(df_v.iterrows(), start=1):
+                nome   = str(row.get("cliente_nome", row.get("cliente_id", "—")))
+                score  = int(round(row.get("score_propensao", 0)))
+                dias   = int(row.get("dias_sem_comprar", 0))
+                tier   = row.get("tier", "")
+                tel    = str(row.get("telefone", "")) or "sem telefone"
+                acao   = _gerar_acao_sugerida(row)
+                linha  = str(row.get("linha", ""))
+
+                tier_emoji = {"QUENTE": "🔥", "MORNO": "🌡️", "FRIO": "🧊", "DORMENTE": "💤"}.get(tier, "")
+                linhas.append(f"{rank}. {nome}")
+                linhas.append(
+                    f"   Score {score} | {tier_emoji} {dias} dias sem comprar | {linha}"
+                )
+                linhas.append(f"   Tel: {tel}")
+                if acao:
+                    linhas.append(f"   Ação: {acao}")
+                linhas.append("")
+
+        linhas.append("")
+
+    linhas.append("─" * 60)
+    linhas.append("Gerado automaticamente pelo Painel S&OE — Aço Cearense")
+    linhas.append(f"Data de geração: {hoje}")
+
+    return "\n".join(linhas)
+
+
 # ── Exportação Excel ──────────────────────────────────────────────────────────
 def _exportar_excel(df_scores: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
@@ -699,7 +776,7 @@ def render(df_vendas: pd.DataFrame, filtros: dict) -> None:
 
     # ── Exportação ────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    col_exp, _ = st.columns([1, 3])
+    col_exp, col_email, _ = st.columns([1, 1.5, 2])
     with col_exp:
         excel_bytes = _exportar_excel(df_scores)
         st.download_button(
@@ -708,6 +785,17 @@ def render(df_vendas: pd.DataFrame, filtros: dict) -> None:
             file_name=f"prioridade_contato_{date.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="propensao_export",
+        )
+    with col_email:
+        email_txt = _gerar_email_coordenadores(df_scores)
+        st.download_button(
+            label="📧 E-mail para Coordenadores",
+            data=email_txt.encode("utf-8"),
+            file_name=f"email_coordenadores_{date.today().strftime('%Y%m%d')}.txt",
+            mime="text/plain",
+            key="propensao_email",
+            help="Gera um arquivo .txt com a lista de clientes por vendedor, "
+                 "separada por gerência, pronto para encaminhar aos coordenadores.",
         )
 
     # ── Gráficos (secundários — em expander) ──────────────────────
